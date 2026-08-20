@@ -1,0 +1,49 @@
+:root {
+  --color-heading: #2e2933;
+  --color-text: #625a69;
+  --color-text-muted: #8d8493;
+  --color-surface: #fffefd;
+  --color-border: #e9e1ea;
+  --color-border-strong: #d8cedb;
+  --color-accent: #74539a;
+  --color-accent-hover: #644388;
+  --color-accent-soft: rgba(116, 83, 154, 0.16);
+  --color-accent-wash: #f7f2fa;
+  --shadow-card: 0 18px 50px rgba(64, 45, 75, 0.08);
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", "Noto Serif SC", "Source Han Serif SC", serif;
+  color: var(--color-text);
+  background: #fbf8fb;
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.42)),
+    #fbf8fb;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  color: #33233e;
+  background: #e8d9f0;
+}
