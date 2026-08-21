@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { ref, shallowRef } from 'vue'
-import { createGuide, GuideApiError } from './guideApi'
+import { createGuide, GuideApiError, GuideAuthenticationRequiredError } from './guideApi'
 import type { GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
+
+defineProps<{
+  loggingOut: boolean
+}>()
+
+const emit = defineEmits<{
+  authenticationRequired: [retry: () => Promise<void>]
+  logout: []
+}>()
 
 const status = ref<GuideStatus>('idle')
 const guide = shallowRef<GuideResponse | null>(null)
 const errorMessage = ref('')
 
-async function submitGuide(repositoryUrl: string) {
+async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = true) {
   status.value = 'submitting'
   guide.value = null
   errorMessage.value = ''
@@ -18,6 +27,11 @@ async function submitGuide(repositoryUrl: string) {
     guide.value = await createGuide(repositoryUrl)
     status.value = 'success'
   } catch (error) {
+    if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
+      status.value = 'idle'
+      emit('authenticationRequired', () => submitGuide(repositoryUrl, false))
+      return
+    }
     errorMessage.value = error instanceof GuideApiError
       ? error.message
       : '发生了意料之外的错误，请稍后重试。'
@@ -29,7 +43,12 @@ async function submitGuide(repositoryUrl: string) {
 <template>
   <main class="guide-page">
     <section class="hero" aria-labelledby="page-title">
-      <p class="product-tag"><span aria-hidden="true">✦</span> Yuki Repo Guide · V0</p>
+      <div class="hero-toolbar">
+        <p class="product-tag"><span aria-hidden="true">✦</span> Yuki Repo Guide · V0</p>
+        <button class="logout-button" type="button" :disabled="loggingOut" @click="emit('logout')">
+          {{ loggingOut ? '正在退出…' : '退出试用' }}
+        </button>
+      </div>
       <h1 id="page-title">从一个地址开始，<br /><em>轻松认识 GitHub 项目。</em></h1>
       <p class="intro">
         粘贴仓库链接，我们先解析出规范的仓库引用。后续导览会从体验入口、技术栈到版本发布，一步步陪你逛明白。
@@ -108,11 +127,19 @@ async function submitGuide(repositoryUrl: string) {
   margin-bottom: 2.25rem;
 }
 
+.hero-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
 .product-tag {
   display: inline-flex;
   gap: 0.45rem;
   align-items: center;
-  margin: 0 0 1.25rem;
+  margin: 0;
   padding: 0.4rem 0.7rem;
   border: 1px solid var(--color-border);
   border-radius: 999px;
@@ -122,6 +149,23 @@ async function submitGuide(repositoryUrl: string) {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.logout-button {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.logout-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 h1 {
