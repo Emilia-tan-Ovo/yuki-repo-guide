@@ -4,7 +4,10 @@ import io.github.emiliatanovo.yukirepoguide.support.TestTrialAccess;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest(properties = TestTrialAccess.HASH_PROPERTY)
+@SpringBootTest(properties = {
+		TestTrialAccess.HASH_PROPERTY,
+		TestTrialAccess.GITHUB_TOKEN_PROPERTY
+})
 class YukiRepoGuideApplicationTests {
 
 	@Test

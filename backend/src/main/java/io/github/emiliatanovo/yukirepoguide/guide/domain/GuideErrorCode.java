@@ -1,0 +1,9 @@
+package io.github.emiliatanovo.yukirepoguide.guide.domain;
+
+public enum GuideErrorCode {
+	REPOSITORY_NOT_ACCESSIBLE,
+	GITHUB_RATE_LIMITED,
+	GITHUB_UPSTREAM_FAILURE,
+	GITHUB_SERVICE_UNAVAILABLE,
+	GITHUB_TIMEOUT
+}

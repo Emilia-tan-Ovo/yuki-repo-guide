@@ -1,9 +1,41 @@
 <script setup lang="ts">
-import type { RepositorySummary } from '../guideTypes'
+import { computed } from 'vue'
+import type { Evidence, LanguageSection, RepositorySummary } from '../guideTypes'
 
-defineProps<{
+const props = defineProps<{
   repository: RepositorySummary
+  languages: LanguageSection
+  evidence: Record<string, Evidence>
+  languageRetrying: boolean
+  retryDisabled: boolean
+  retryMessage: string
+  languageErrorMessage: string
 }>()
+
+defineEmits<{
+  retryLanguages: []
+}>()
+
+const repositoryEvidence = computed(() => props.evidence[props.repository.evidenceId])
+const languageEvidence = computed(() => {
+  const evidenceId = props.languages.evidenceId
+  return evidenceId ? props.evidence[evidenceId] : undefined
+})
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value))
+}
+
+function formatPercentage(value: number): string {
+  return Number.isInteger(value) ? `${value}%` : `${value.toFixed(1)}%`
+}
+
+function barWidth(value: number): string {
+  return `${Math.min(100, Math.max(0, value))}%`
+}
 </script>
 
 <template>
@@ -18,31 +50,104 @@ defineProps<{
         </svg>
       </div>
       <div>
-        <p class="eyebrow">地址已解析</p>
+        <p class="eyebrow">GitHub 仓库</p>
         <h2 id="repository-name">{{ repository.name }}</h2>
       </div>
-      <span class="status-dot">格式有效</span>
+      <span class="status-dot">已确认</span>
     </div>
 
-    <dl>
+    <p class="description">
+      {{ repository.description || 'GitHub 未提供仓库描述。' }}
+    </p>
+
+    <dl class="fact-list">
       <div>
         <dt>所有者</dt>
         <dd>{{ repository.owner }}</dd>
       </div>
       <div>
-        <dt>标准地址</dt>
-        <dd>
-          <a :href="repository.canonicalUrl" target="_blank" rel="noreferrer">
-            {{ repository.canonicalUrl }}
-            <span aria-hidden="true">↗</span>
-          </a>
-        </dd>
+        <dt>Stars</dt>
+        <dd>{{ repository.stars.toLocaleString('zh-CN') }}</dd>
+      </div>
+      <div>
+        <dt>创建时间</dt>
+        <dd>{{ formatDate(repository.createdAt) }}</dd>
+      </div>
+      <div>
+        <dt>最近代码更新</dt>
+        <dd>{{ repository.pushedAt ? formatDate(repository.pushedAt) : '暂无代码更新记录' }}</dd>
       </div>
     </dl>
 
-    <p class="next-note">
-      规范化仓库引用已经生成；仓库是否存在及其公开内容将在后续 Ticket 中验证。
-    </p>
+    <div class="repository-links">
+      <span>来源：GitHub</span>
+      <a :href="repository.canonicalUrl" target="_blank" rel="noreferrer">
+        查看原仓库 <span aria-hidden="true">↗</span>
+      </a>
+    </div>
+
+    <details v-if="repositoryEvidence" class="evidence-panel">
+      <summary>查看仓库证据</summary>
+      <div class="evidence-content">
+        <p>来源：{{ repositoryEvidence.source }}</p>
+        <p v-if="repositoryEvidence.recentCodeUpdate">
+          原始字段：<code>{{ repositoryEvidence.recentCodeUpdate.field }}</code><br />
+          原始值：<code>{{ repositoryEvidence.recentCodeUpdate.value }}</code>
+        </p>
+      </div>
+    </details>
+
+    <section class="language-section" aria-labelledby="language-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">仓库事实</p>
+          <h3 id="language-title">语言分布</h3>
+        </div>
+        <span v-if="languages.status === 'AVAILABLE'" class="section-status">来自 GitHub</span>
+      </div>
+
+      <div v-if="languages.status === 'AVAILABLE'" class="language-list">
+        <div v-for="language in languages.items" :key="language.name" class="language-row">
+          <div class="language-label">
+            <strong>{{ language.name }}</strong>
+            <span>{{ formatPercentage(language.percentage) }}</span>
+          </div>
+          <div class="language-track" aria-hidden="true">
+            <span :style="{ width: barWidth(language.percentage) }"></span>
+          </div>
+        </div>
+      </div>
+
+      <p v-else-if="languages.status === 'NOT_PROVIDED'" class="language-state">
+        GitHub 暂未提供这个仓库的语言统计。
+      </p>
+
+      <div v-else class="language-failure" role="status">
+        <p>{{ languageErrorMessage || '语言区域加载失败，请重新尝试。' }}</p>
+        <p class="retry-hint">{{ retryMessage }}</p>
+        <button
+          type="button"
+          :disabled="retryDisabled"
+          @click="$emit('retryLanguages')"
+        >
+          {{ languageRetrying ? '正在重试…' : '重试语言区域' }}
+        </button>
+      </div>
+
+      <details v-if="languageEvidence" class="evidence-panel">
+        <summary>查看语言证据</summary>
+        <div class="evidence-content">
+          <p>来源：{{ languageEvidence.source }}</p>
+          <p>总字节数：{{ languageEvidence.totalBytes?.toLocaleString('zh-CN') }}</p>
+          <ul>
+            <li v-for="language in languageEvidence.languages" :key="language.name">
+              {{ language.name }} 字节数：{{ language.bytes.toLocaleString('zh-CN') }}；
+              占比：{{ formatPercentage(language.percentage) }}
+            </li>
+          </ul>
+        </div>
+      </details>
+    </section>
   </article>
 </template>
 
@@ -98,6 +203,12 @@ h2 {
   white-space: nowrap;
 }
 
+h3 {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: 1.05rem;
+}
+
 .status-dot {
   padding: 0.35rem 0.65rem;
   border-radius: 999px;
@@ -111,6 +222,12 @@ dl {
   display: grid;
   gap: 0.85rem;
   margin: 0;
+}
+
+.description {
+  margin: 0;
+  color: var(--color-text);
+  line-height: 1.65;
 }
 
 dl > div {
@@ -146,14 +263,146 @@ a:hover {
   text-underline-offset: 0.2em;
 }
 
-.next-note {
+.repository-links,
+.section-heading,
+.language-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.repository-links {
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+}
+
+.language-section {
+  display: grid;
+  gap: 1rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.section-status {
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  color: var(--color-accent);
+  background: var(--color-accent-wash);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.language-list {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.language-row {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.language-label {
+  color: var(--color-heading);
+  font-size: 0.86rem;
+}
+
+.language-label span {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.language-track {
+  height: 0.45rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eee8f0;
+}
+
+.language-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-accent), #b68ac5);
+}
+
+.language-state,
+.language-failure {
   margin: 0;
-  padding: 0.85rem 1rem;
+  padding: 0.9rem 1rem;
   border-radius: 0.85rem;
-  color: var(--color-text);
   background: var(--color-accent-wash);
   font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.language-failure {
+  color: #7d3443;
+  background: #fff7f8;
+}
+
+.language-failure p {
+  margin: 0;
+}
+
+.retry-hint {
+  color: #996070;
+  font-size: 0.78rem;
+}
+
+.language-failure button {
+  min-height: 2.45rem;
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  border-radius: 0.7rem;
+  color: white;
+  background: var(--color-accent);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.language-failure button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.evidence-panel {
+  border: 1px solid var(--color-border);
+  border-radius: 0.85rem;
+  color: var(--color-text-muted);
+  background: rgba(247, 242, 250, 0.55);
+  font-size: 0.8rem;
+}
+
+.evidence-panel summary {
+  padding: 0.75rem 0.9rem;
+  color: var(--color-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.evidence-content {
+  padding: 0 0.9rem 0.8rem;
+  overflow-wrap: anywhere;
   line-height: 1.65;
+}
+
+.evidence-content p,
+.evidence-content ul {
+  margin: 0.4rem 0 0;
+}
+
+.evidence-content ul {
+  padding-left: 1.15rem;
+}
+
+.evidence-content code {
+  color: var(--color-heading);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 @media (max-width: 520px) {
@@ -168,6 +417,11 @@ a:hover {
   dl > div {
     grid-template-columns: 1fr;
     gap: 0.25rem;
+  }
+
+  .repository-links {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 </style>

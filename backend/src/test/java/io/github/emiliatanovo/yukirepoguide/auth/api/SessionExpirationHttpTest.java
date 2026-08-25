@@ -27,7 +27,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(
 		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-		properties = TestTrialAccess.HASH_PROPERTY)
+		properties = {
+				TestTrialAccess.HASH_PROPERTY,
+				TestTrialAccess.GITHUB_TOKEN_PROPERTY
+		})
 @Import(SessionExpirationHttpTest.SessionCaptureConfiguration.class)
 class SessionExpirationHttpTest {
 

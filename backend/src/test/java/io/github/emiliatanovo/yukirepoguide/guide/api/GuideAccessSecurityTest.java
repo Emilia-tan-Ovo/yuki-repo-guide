@@ -13,7 +13,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(properties = TestTrialAccess.HASH_PROPERTY)
+@SpringBootTest(properties = {
+		TestTrialAccess.HASH_PROPERTY,
+		TestTrialAccess.GITHUB_TOKEN_PROPERTY
+})
 @AutoConfigureMockMvc
 class GuideAccessSecurityTest {
 
@@ -27,6 +30,17 @@ class GuideAccessSecurityTest {
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 						{"repositoryUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void rejectsLanguageRetryWithoutTrialAccess() throws Exception {
+		mockMvc.perform(post("/api/guides/languages/retry")
+				.with(csrf())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
 						"""))
 				.andExpect(status().isUnauthorized());
 	}
