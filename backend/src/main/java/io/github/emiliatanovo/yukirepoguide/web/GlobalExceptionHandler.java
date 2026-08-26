@@ -1,6 +1,8 @@
 package io.github.emiliatanovo.yukirepoguide.web;
 
 import io.github.emiliatanovo.yukirepoguide.auth.application.TooManyLoginAttemptsException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRepositoryUrlException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -13,6 +15,26 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public final class GlobalExceptionHandler {
+
+	@ExceptionHandler(GitHubSourceException.class)
+	public ResponseEntity<ProblemDetail> handleGitHubSourceFailure(
+			GitHubSourceException exception) {
+		GitHubErrorPresentation presentation = presentationFor(exception.code());
+		var problem = ProblemDetail.forStatusAndDetail(
+				presentation.status(), presentation.detail());
+		problem.setTitle(presentation.title());
+		problem.setProperty("code", exception.code().name());
+
+		ResponseEntity.BodyBuilder response = ResponseEntity.status(presentation.status());
+		if (exception.code() == GuideErrorCode.GITHUB_RATE_LIMITED
+				&& exception.retryAfterSeconds() != null) {
+			problem.setProperty("retryAfterSeconds", exception.retryAfterSeconds());
+			response.header(
+					HttpHeaders.RETRY_AFTER,
+					Long.toString(exception.retryAfterSeconds()));
+		}
+		return response.body(problem);
+	}
 
 	@ExceptionHandler(TooManyLoginAttemptsException.class)
 	public ResponseEntity<ProblemDetail> handleTooManyLoginAttempts(
@@ -42,18 +64,51 @@ public final class GlobalExceptionHandler {
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ProblemDetail handleInvalidRequest(MethodArgumentNotValidException exception) {
-		var fieldError = exception.getBindingResult().getFieldError("repositoryUrl");
+		var fieldError = exception.getBindingResult().getFieldError();
 		var detail = fieldError != null && fieldError.getDefaultMessage() != null
 				? fieldError.getDefaultMessage()
 				: "请输入有效的 GitHub 仓库地址。";
-		return invalidRepositoryUrlProblem(detail);
+		String field = fieldError != null ? fieldError.getField() : "repositoryUrl";
+		return invalidRepositoryUrlProblem(detail, field);
 	}
 
 	private ProblemDetail invalidRepositoryUrlProblem(String detail) {
+		return invalidRepositoryUrlProblem(detail, "repositoryUrl");
+	}
+
+	private ProblemDetail invalidRepositoryUrlProblem(String detail, String field) {
 		var problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
 		problem.setTitle("仓库地址无效");
 		problem.setProperty("code", "INVALID_REPOSITORY_URL");
-		problem.setProperty("field", "repositoryUrl");
+		problem.setProperty("field", field);
 		return problem;
+	}
+
+	private GitHubErrorPresentation presentationFor(GuideErrorCode code) {
+		return switch (code) {
+			case REPOSITORY_NOT_ACCESSIBLE -> new GitHubErrorPresentation(
+					HttpStatus.NOT_FOUND,
+					"仓库不可访问",
+					"仓库可能不存在、不是公开仓库，或暂时无法访问。请检查地址和可见性。");
+			case GITHUB_RATE_LIMITED -> new GitHubErrorPresentation(
+					HttpStatus.TOO_MANY_REQUESTS,
+					"GitHub 请求受限",
+					"GitHub 暂时限制了请求，请稍后重试。");
+			case GITHUB_UPSTREAM_FAILURE -> new GitHubErrorPresentation(
+					HttpStatus.BAD_GATEWAY,
+					"GitHub 上游故障",
+					"暂时无法从 GitHub 获取数据，请稍后重试。");
+			case GITHUB_SERVICE_UNAVAILABLE -> new GitHubErrorPresentation(
+					HttpStatus.SERVICE_UNAVAILABLE,
+					"GitHub 服务暂不可用",
+					"暂时无法从 GitHub 获取数据。这不是你的操作造成的，请稍后重试。");
+			case GITHUB_TIMEOUT -> new GitHubErrorPresentation(
+					HttpStatus.GATEWAY_TIMEOUT,
+					"GitHub 请求超时",
+					"连接 GitHub 超时，请检查网络状况或稍后重试。");
+		};
+	}
+
+	private record GitHubErrorPresentation(HttpStatus status, String title, String detail) {
 	}
 }

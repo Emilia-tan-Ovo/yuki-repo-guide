@@ -1,17 +1,26 @@
 package io.github.emiliatanovo.yukirepoguide.auth.api;
 
 import com.jayway.jsonpath.JsonPath;
+import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryFactsSource;
 import io.github.emiliatanovo.yukirepoguide.support.TestTrialAccess;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Duration;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.emptyOrNullString;
@@ -24,8 +33,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 
-@SpringBootTest(properties = TestTrialAccess.HASH_PROPERTY)
+@SpringBootTest(properties = {
+		TestTrialAccess.HASH_PROPERTY,
+		TestTrialAccess.GITHUB_TOKEN_PROPERTY
+})
 @AutoConfigureMockMvc
+@Import(AuthHttpContractTest.FakeRepositoryFactsConfiguration.class)
 class AuthHttpContractTest {
 
 	@Autowired
@@ -179,5 +192,21 @@ class AuthHttpContractTest {
 				.with(csrf()))
 				.andExpect(status().isNoContent())
 				.andExpect(unauthenticated());
+	}
+
+	@TestConfiguration(proxyBeanMethods = false)
+	static class FakeRepositoryFactsConfiguration {
+
+		@Bean
+		@Primary
+		RepositoryFactsSource fakeRepositoryFactsSource() {
+			var reference = new RepositoryRef("Emilia-tan-Ovo", "yuki-repo-guide");
+			return FakeRepositoryFactsSource.withMetadata(new RepositoryFacts(
+					reference,
+					"Evidence-first GitHub repository guide",
+					123,
+					Instant.parse("2026-08-01T00:00:00Z"),
+					Instant.parse("2026-08-24T12:00:00Z")));
+		}
 	}
 }

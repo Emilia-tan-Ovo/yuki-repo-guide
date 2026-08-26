@@ -21,4 +21,11 @@ public final class GuideController {
 	public GuideResponse createGuide(@Valid @RequestBody CreateGuideRequest request) {
 		return GuideResponse.from(guideService.createGuide(request.repositoryUrl()));
 	}
+
+	@PostMapping("/languages/retry")
+	public LanguageRetryResponse retryLanguages(
+			@Valid @RequestBody RetryLanguagesRequest request) {
+		return LanguageRetryResponse.from(
+				guideService.retryLanguages(request.canonicalUrl()));
+	}
 }

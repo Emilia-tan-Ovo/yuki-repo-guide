@@ -1,6 +1,18 @@
 <script setup lang="ts">
-import { ref, shallowRef } from 'vue'
-import { createGuide, GuideApiError, GuideAuthenticationRequiredError } from './guideApi'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import {
+  createGuide,
+  GuideApiError,
+  GuideAuthenticationRequiredError,
+  messageForLanguageCode,
+  retryLanguages,
+} from './guideApi'
+import {
+  applyLanguageRetry,
+  createRetryDeadline,
+  isCurrentLanguageRetry,
+  retryAvailability,
+} from './languageRetry'
 import type { GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
@@ -17,14 +29,39 @@ const emit = defineEmits<{
 const status = ref<GuideStatus>('idle')
 const guide = shallowRef<GuideResponse | null>(null)
 const errorMessage = ref('')
+const languageRetrying = ref(false)
+const languageErrorMessage = ref('')
+const retryAvailableAt = ref<number | null>(null)
+const currentTime = ref(Date.now())
+const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
+const retryDisabled = computed(() => languageRetrying.value || retryState.value.disabled)
+let clockTimer: ReturnType<typeof setInterval> | undefined
+let guideVersion = 0
+
+onMounted(() => {
+  clockTimer = setInterval(() => {
+    currentTime.value = Date.now()
+  }, 1_000)
+})
+
+onBeforeUnmount(() => {
+  if (clockTimer !== undefined) {
+    clearInterval(clockTimer)
+  }
+})
 
 async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = true) {
+  guideVersion += 1
+  languageRetrying.value = false
+  languageErrorMessage.value = ''
+  retryAvailableAt.value = null
   status.value = 'submitting'
   guide.value = null
   errorMessage.value = ''
 
   try {
     guide.value = await createGuide(repositoryUrl)
+    initializeLanguageState()
     status.value = 'success'
   } catch (error) {
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
@@ -37,6 +74,75 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
       : '发生了意料之外的错误，请稍后重试。'
     status.value = 'error'
   }
+}
+
+async function retryLanguageRegion(
+  allowAuthenticationRecovery = true,
+  requestedGuideVersion = guideVersion,
+) {
+  if (!guide.value || retryDisabled.value || requestedGuideVersion !== guideVersion) {
+    return
+  }
+
+  const requestedCanonicalUrl = guide.value.repository.canonicalUrl
+  languageRetrying.value = true
+  languageErrorMessage.value = ''
+  try {
+    const retried = await retryLanguages(requestedCanonicalUrl)
+    if (!isCurrentLanguageRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    guide.value = applyLanguageRetry(guide.value, retried)
+    initializeLanguageState()
+  } catch (error) {
+    if (!isCurrentLanguageRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
+      emit('authenticationRequired', () => retryLanguageRegion(false, requestedGuideVersion))
+      return
+    }
+    languageErrorMessage.value = error instanceof GuideApiError
+      ? messageForLanguageCode(error.code, error.message)
+      : '语言区域暂时无法更新，请稍后重试。'
+    setRetryDeadline(error instanceof GuideApiError ? error.retryAfterSeconds : null)
+  } finally {
+    if (isCurrentLanguageRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      languageRetrying.value = false
+    }
+  }
+}
+
+function initializeLanguageState() {
+  if (!guide.value || guide.value.languages.status !== 'FAILED') {
+    languageErrorMessage.value = ''
+    retryAvailableAt.value = null
+    return
+  }
+  const failure = guide.value.languages.failure
+  languageErrorMessage.value = messageForLanguageCode(failure?.code)
+  setRetryDeadline(failure?.retryAfterSeconds)
+}
+
+function setRetryDeadline(retryAfterSeconds?: number | null) {
+  const now = Date.now()
+  currentTime.value = now
+  retryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
 }
 </script>
 
@@ -51,7 +157,7 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
       </div>
       <h1 id="page-title">从一个地址开始，<br /><em>轻松认识 GitHub 项目。</em></h1>
       <p class="intro">
-        粘贴仓库链接，我们先解析出规范的仓库引用。后续导览会从体验入口、技术栈到版本发布，一步步陪你逛明白。
+        粘贴仓库链接，我们会从 GitHub 读取可追溯的基础事实，先陪你看清这个项目的身份、活跃时间和语言分布。
       </p>
     </section>
 
@@ -62,6 +168,13 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
         <RepositoryIdentityCard
           v-if="status === 'success' && guide"
           :repository="guide.repository"
+          :languages="guide.languages"
+          :evidence="guide.evidence"
+          :language-retrying="languageRetrying"
+          :retry-disabled="retryDisabled"
+          :retry-message="retryState.message"
+          :language-error-message="languageErrorMessage"
+          @retry-languages="retryLanguageRegion"
         />
         <div v-else-if="status === 'error'" class="error-message" role="alert">
           <span aria-hidden="true">!</span>
@@ -80,7 +193,7 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
     <footer>
       <span>先逛起来，再决定是否深入。</span>
       <span aria-hidden="true">·</span>
-      <span>当前不会请求 GitHub</span>
+      <span>仓库事实来自 GitHub</span>
     </footer>
   </main>
 </template>
