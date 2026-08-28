@@ -7,5 +7,15 @@ public record RepositoryFacts(
 		String description,
 		long stars,
 		Instant createdAt,
-		Instant pushedAt) {
+		Instant pushedAt,
+		String projectWebsiteUrl) {
+
+	public RepositoryFacts(
+			RepositoryRef reference,
+			String description,
+			long stars,
+			Instant createdAt,
+			Instant pushedAt) {
+		this(reference, description, stars, createdAt, pushedAt, null);
+	}
 }

@@ -28,4 +28,11 @@ public final class GuideController {
 		return LanguageRetryResponse.from(
 				guideService.retryLanguages(request.canonicalUrl()));
 	}
+
+	@PostMapping("/readme/retry")
+	public ReadmeRetryResponse retryReadme(
+			@Valid @RequestBody RetryReadmeRequest request) {
+		return ReadmeRetryResponse.from(
+				guideService.retryReadme(request.canonicalUrl()));
+	}
 }

@@ -3,9 +3,12 @@ package io.github.emiliatanovo.yukirepoguide.guide.github;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryReadmeSource;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
@@ -19,6 +22,10 @@ import org.springframework.web.client.RestClientException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -26,13 +33,18 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.Base64;
+import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class GitHubRepositoryFactsAdapter implements RepositoryFactsSource {
+public final class GitHubRepositoryFactsAdapter
+		implements RepositoryFactsSource, RepositoryReadmeSource {
 
 	private static final String API_BASE_URL = "https://api.github.com";
+	private static final long MAX_README_BYTES = 1024L * 1024L;
+	private static final int MAX_ENCODED_README_CHARACTERS = 1_500_000;
 	private static final Pattern REPOSITORY_REDIRECT_PATH =
 			Pattern.compile("^/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$");
 	private final RestClient restClient;
@@ -80,7 +92,100 @@ public final class GitHubRepositoryFactsAdapter implements RepositoryFactsSource
 				response.description(),
 				response.stars(),
 				response.createdAt(),
-				response.pushedAt());
+				response.pushedAt(),
+				safeExternalUrl(response.homepage()));
+	}
+
+	@Override
+	public Optional<RepositoryReadme> fetchReadme(RepositoryRef repositoryRef) {
+		GitHubReadmeResponse response;
+		try {
+			response = execute(() -> restClient.get()
+					.uri("/repos/{owner}/{repository}/readme",
+							repositoryRef.owner(), repositoryRef.name())
+					.retrieve()
+					.onStatus(status -> status.value() == HttpStatus.NOT_FOUND.value(),
+							(request, upstreamResponse) -> {
+								throw new ReadmeNotFoundException();
+							})
+					.onStatus(HttpStatusCode::isError, (request, upstreamResponse) -> {
+						throw classify(upstreamResponse.getStatusCode(), upstreamResponse.getHeaders());
+					})
+					.body(GitHubReadmeResponse.class));
+		}
+		catch (ReadmeNotFoundException exception) {
+			return Optional.empty();
+		}
+
+		if (response == null
+				|| response.path() == null
+				|| response.path().isBlank()
+				|| response.sha() == null
+				|| response.sha().isBlank()
+				|| safeGitHubHtmlUrl(response.htmlUrl()) == null) {
+			throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		}
+		return Optional.of(new RepositoryReadme(
+				response.path(),
+				response.sha(),
+				response.htmlUrl(),
+				decodeReadme(response)));
+	}
+
+	private String decodeReadme(GitHubReadmeResponse response) {
+		if (response.size() == null
+				|| response.size() < 0
+				|| response.size() > MAX_README_BYTES
+				|| !"base64".equals(response.encoding())
+				|| response.content() == null
+				|| response.content().length() > MAX_ENCODED_README_CHARACTERS) {
+			throw new ReadmeContentUnsupportedException();
+		}
+		try {
+			String compactContent = response.content().replaceAll("\\s+", "");
+			byte[] decoded = Base64.getDecoder().decode(compactContent);
+			if (decoded.length != response.size() || decoded.length > MAX_README_BYTES) {
+				throw new ReadmeContentUnsupportedException();
+			}
+			return StandardCharsets.UTF_8.newDecoder()
+					.onMalformedInput(CodingErrorAction.REPORT)
+					.onUnmappableCharacter(CodingErrorAction.REPORT)
+					.decode(ByteBuffer.wrap(decoded))
+					.toString();
+		}
+		catch (IllegalArgumentException | CharacterCodingException exception) {
+			throw new ReadmeContentUnsupportedException(
+					"README content cannot be decoded as base64 UTF-8", exception);
+		}
+	}
+
+	private String safeExternalUrl(String rawUrl) {
+		if (rawUrl == null || rawUrl.isBlank()) {
+			return null;
+		}
+		try {
+			URI uri = URI.create(rawUrl);
+			boolean supportedScheme = "https".equalsIgnoreCase(uri.getScheme())
+					|| "http".equalsIgnoreCase(uri.getScheme());
+			return supportedScheme && uri.getHost() != null && uri.getUserInfo() == null
+					? uri.toString()
+					: null;
+		}
+		catch (IllegalArgumentException exception) {
+			return null;
+		}
+	}
+
+	private String safeGitHubHtmlUrl(String rawUrl) {
+		String safeUrl = safeExternalUrl(rawUrl);
+		if (safeUrl == null) {
+			return null;
+		}
+		URI uri = URI.create(safeUrl);
+		return "https".equalsIgnoreCase(uri.getScheme())
+				&& "github.com".equalsIgnoreCase(uri.getHost())
+				? safeUrl
+				: null;
 	}
 
 	private GitHubRepositoryResponse fetchMetadataResponse(
@@ -280,9 +385,19 @@ public final class GitHubRepositoryFactsAdapter implements RepositoryFactsSource
 			String name,
 			GitHubOwner owner,
 			String description,
+			String homepage,
 			@JsonProperty("stargazers_count") Long stars,
 			@JsonProperty("created_at") Instant createdAt,
 			@JsonProperty("pushed_at") Instant pushedAt) {
+	}
+
+	private record GitHubReadmeResponse(
+			String path,
+			String sha,
+			@JsonProperty("html_url") String htmlUrl,
+			Long size,
+			String encoding,
+			String content) {
 	}
 
 	private record GitHubOwner(String login) {
@@ -299,5 +414,8 @@ public final class GitHubRepositoryFactsAdapter implements RepositoryFactsSource
 		private URI location() {
 			return location;
 		}
+	}
+
+	private static final class ReadmeNotFoundException extends RuntimeException {
 	}
 }

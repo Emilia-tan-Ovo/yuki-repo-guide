@@ -46,6 +46,17 @@ class GuideAccessSecurityTest {
 	}
 
 	@Test
+	void rejectsReadmeRetryWithoutTrialAccess() throws Exception {
+		mockMvc.perform(post("/api/guides/readme/retry")
+				.with(csrf())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
 	void doesNotExposeUnlistedResourcesByDefault() throws Exception {
 		mockMvc.perform(get("/internal"))
 				.andExpect(status().isUnauthorized());

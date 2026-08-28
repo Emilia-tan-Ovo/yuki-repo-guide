@@ -2,12 +2,16 @@ package io.github.emiliatanovo.yukirepoguide.guide.api;
 
 import io.github.emiliatanovo.yukirepoguide.guide.application.GuideService;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.OnlineExperienceRecognizer;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.github.GitHubRepositoryUrlParser;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReadmeSource;
 import io.github.emiliatanovo.yukirepoguide.web.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,6 +34,100 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GuideControllerTest {
+
+	@Test
+	void returnsReadmeCandidatesWithPlainEvidenceAndKeepsHomepageSeparate() throws Exception {
+		readmeSource.returning(new RepositoryReadme(
+				"README.md",
+				"abc123",
+				"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/blob/main/README.md",
+				"## Demo\n[Try it online](https://demo.example.com)"));
+
+		mockMvc.perform(post("/api/guides")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"repositoryUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.repository.projectWebsiteUrl")
+						.value("https://project.example.com"))
+				.andExpect(jsonPath("$.readme.status").value("AVAILABLE"))
+				.andExpect(jsonPath("$.readme.candidates[0].label").value("Try it online"))
+				.andExpect(jsonPath("$.readme.candidates[0].url")
+						.value("https://demo.example.com"))
+				.andExpect(jsonPath("$.readme.candidates[0].evidenceId")
+						.value("readme-online-experience-1"))
+				.andExpect(jsonPath("$.evidence.readme-online-experience-1.type")
+						.value("README"))
+				.andExpect(jsonPath("$.evidence.readme-online-experience-1.path")
+						.value("README.md"))
+				.andExpect(jsonPath("$.evidence.readme-online-experience-1.sha")
+						.value("abc123"))
+				.andExpect(jsonPath("$.evidence.readme-online-experience-1.context")
+						.value("Try it online"))
+				.andExpect(jsonPath("$.evidence.readme-online-experience-1.executableHtml")
+						.doesNotExist());
+	}
+
+	@Test
+	void keepsAnInitialReadmeFailureInsideTheSuccessfulGuideResponse() throws Exception {
+		readmeSource.failingWith(new GitHubSourceException(GuideErrorCode.GITHUB_TIMEOUT));
+
+		mockMvc.perform(post("/api/guides")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"repositoryUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.readme.status").value("FAILED"))
+				.andExpect(jsonPath("$.readme.failure.code").value("GITHUB_TIMEOUT"))
+				.andExpect(jsonPath("$.readme.failure.retryable").value(true));
+	}
+
+	@Test
+	void mapsUnsupportedReadmeOnExplicitRetryToUnprocessableContent() throws Exception {
+		readmeSource.failingWith(new ReadmeContentUnsupportedException());
+
+		mockMvc.perform(post("/api/guides/readme/retry")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isUnprocessableContent())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+				.andExpect(jsonPath("$.code").value("README_CONTENT_UNSUPPORTED"))
+				.andExpect(jsonPath("$.retryable").value(false));
+	}
+
+	@Test
+	void preservesRetryAfterWhenExplicitReadmeRetryIsRateLimited() throws Exception {
+		readmeSource.failingWith(new GitHubSourceException(
+				GuideErrorCode.GITHUB_RATE_LIMITED, 90L));
+
+		mockMvc.perform(post("/api/guides/readme/retry")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(header().string("Retry-After", "90"))
+				.andExpect(jsonPath("$.code").value("GITHUB_RATE_LIMITED"))
+				.andExpect(jsonPath("$.retryAfterSeconds").value(90));
+	}
+
+	@Test
+	void mapsMissingReadmeOnExplicitRetryToNotProvided() throws Exception {
+		mockMvc.perform(post("/api/guides/readme/retry")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.repository").doesNotExist())
+				.andExpect(jsonPath("$.languages").doesNotExist())
+				.andExpect(jsonPath("$.readme.status").value("NOT_PROVIDED"))
+				.andExpect(jsonPath("$.evidence").isEmpty());
+	}
 
 	@ParameterizedTest
 	@MethodSource("coreFailureMappings")
@@ -93,6 +191,7 @@ class GuideControllerTest {
 
 	private MockMvc mockMvc;
 	private FakeRepositoryFactsSource factsSource;
+	private FakeRepositoryReadmeSource readmeSource;
 
 	@BeforeEach
 	void setUp() {
@@ -102,11 +201,15 @@ class GuideControllerTest {
 				"Evidence-first GitHub repository guide",
 				123,
 				Instant.parse("2026-08-01T00:00:00Z"),
-				Instant.parse("2026-08-24T12:00:00Z"));
+				Instant.parse("2026-08-24T12:00:00Z"),
+				"https://project.example.com");
 		factsSource = FakeRepositoryFactsSource.withMetadata(repository);
+		readmeSource = FakeRepositoryReadmeSource.withoutReadme();
 		var guideService = new GuideService(
 				new GitHubRepositoryUrlParser(),
-				factsSource);
+				factsSource,
+				readmeSource,
+				new OnlineExperienceRecognizer());
 		mockMvc = MockMvcBuilders.standaloneSetup(new GuideController(guideService))
 				.setControllerAdvice(new GlobalExceptionHandler())
 				.build();

@@ -6,6 +6,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageShare;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ProjectGuide;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RawFact;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
@@ -26,12 +27,18 @@ public final class GuideService {
 
 	private final RepositoryUrlParser repositoryUrlParser;
 	private final RepositoryFactsSource repositoryFactsSource;
+	private final RepositoryReadmeSource repositoryReadmeSource;
+	private final OnlineExperienceRecognizer onlineExperienceRecognizer;
 
 	public GuideService(
 			RepositoryUrlParser repositoryUrlParser,
-			RepositoryFactsSource repositoryFactsSource) {
+			RepositoryFactsSource repositoryFactsSource,
+			RepositoryReadmeSource repositoryReadmeSource,
+			OnlineExperienceRecognizer onlineExperienceRecognizer) {
 		this.repositoryUrlParser = repositoryUrlParser;
 		this.repositoryFactsSource = repositoryFactsSource;
+		this.repositoryReadmeSource = repositoryReadmeSource;
+		this.onlineExperienceRecognizer = onlineExperienceRecognizer;
 	}
 
 	public ProjectGuide createGuide(String rawUrl) {
@@ -39,6 +46,8 @@ public final class GuideService {
 		RepositoryFacts repository = repositoryFactsSource.fetchMetadata(requestedRepository);
 		Map<String, GuideEvidence> evidence = new LinkedHashMap<>();
 		evidence.put(REPOSITORY_EVIDENCE_ID, repositoryEvidence(repository));
+		ReadmeSection readme = initialReadmeSection(repository.reference());
+		evidence.putAll(readme.evidence());
 		LanguageSection languages;
 		try {
 			RepositoryLanguageBytes languageBytes =
@@ -51,7 +60,32 @@ public final class GuideService {
 		catch (GitHubSourceException exception) {
 			languages = LanguageSection.failed(exception.code(), exception.retryAfterSeconds());
 		}
-		return new ProjectGuide(repository, REPOSITORY_EVIDENCE_ID, languages, evidence);
+		return new ProjectGuide(repository, REPOSITORY_EVIDENCE_ID, readme, languages, evidence);
+	}
+
+	private ReadmeSection initialReadmeSection(RepositoryRef repository) {
+		try {
+			return repositoryReadmeSource.fetchReadme(repository)
+					.map(onlineExperienceRecognizer::recognize)
+					.orElseGet(ReadmeSection::notProvided);
+		}
+		catch (ReadmeContentUnsupportedException exception) {
+			return ReadmeSection.failed(
+					io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode.README_CONTENT_UNSUPPORTED,
+					false,
+					null);
+		}
+		catch (GitHubSourceException exception) {
+			return ReadmeSection.failed(
+					exception.code(), true, exception.retryAfterSeconds());
+		}
+	}
+
+	public ReadmeSection retryReadme(String canonicalUrl) {
+		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
+		return repositoryReadmeSource.fetchReadme(repository)
+				.map(onlineExperienceRecognizer::recognize)
+				.orElseGet(ReadmeSection::notProvided);
 	}
 
 	public LanguageSection retryLanguages(String canonicalUrl) {

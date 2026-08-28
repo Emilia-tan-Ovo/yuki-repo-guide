@@ -2,6 +2,7 @@ import type {
   GuideErrorCode,
   GuideResponse,
   LanguageRetryResponse,
+  ReadmeRetryResponse,
   ProblemDetail,
 } from './guideTypes.ts'
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
@@ -38,6 +39,10 @@ export async function createGuide(repositoryUrl: string): Promise<GuideResponse>
 
 export async function retryLanguages(canonicalUrl: string): Promise<LanguageRetryResponse> {
   return requestGuide<LanguageRetryResponse>(() => sendLanguageRetryRequest(canonicalUrl))
+}
+
+export async function retryReadme(canonicalUrl: string): Promise<ReadmeRetryResponse> {
+  return requestGuide<ReadmeRetryResponse>(() => sendReadmeRetryRequest(canonicalUrl))
 }
 
 async function requestGuide<T>(sendRequest: () => Promise<Response>): Promise<T> {
@@ -83,6 +88,14 @@ function sendLanguageRetryRequest(canonicalUrl: string): Promise<Response> {
   })
 }
 
+function sendReadmeRetryRequest(canonicalUrl: string): Promise<Response> {
+  return fetchWithCsrfRetry('/api/guides/readme/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canonicalUrl }),
+  })
+}
+
 export function messageForCode(code?: GuideErrorCode, fallback?: string): string {
   switch (code) {
     case 'REPOSITORY_NOT_ACCESSIBLE':
@@ -95,9 +108,18 @@ export function messageForCode(code?: GuideErrorCode, fallback?: string): string
       return 'GitHub 暂时无法提供数据，这不是你的操作造成的，请稍后重试。'
     case 'GITHUB_TIMEOUT':
       return '连接 GitHub 超时，请检查网络状况或稍后重试。'
+    case 'README_CONTENT_UNSUPPORTED':
+      return '当前 README 内容格式暂不受支持，无法识别在线体验入口。'
     default:
       return fallback ?? '导览请求失败了，请稍后重试。'
   }
+}
+
+export function messageForReadmeCode(code?: string, fallback?: string): string {
+  if (code === 'REPOSITORY_NOT_ACCESSIBLE') {
+    return 'GitHub 暂时无法读取这个仓库的 README，请稍后重试。'
+  }
+  return messageForCode(code as GuideErrorCode | undefined, fallback)
 }
 
 export function messageForLanguageCode(code?: string, fallback?: string): string {

@@ -5,6 +5,8 @@ import {
   GuideApiError,
   GuideAuthenticationRequiredError,
   messageForLanguageCode,
+  messageForReadmeCode,
+  retryReadme,
   retryLanguages,
 } from './guideApi'
 import {
@@ -13,6 +15,7 @@ import {
   isCurrentLanguageRetry,
   retryAvailability,
 } from './languageRetry'
+import { applyReadmeRetry, isCurrentReadmeRetry } from './readmeRetry'
 import type { GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
@@ -31,10 +34,19 @@ const guide = shallowRef<GuideResponse | null>(null)
 const errorMessage = ref('')
 const languageRetrying = ref(false)
 const languageErrorMessage = ref('')
+const readmeRetrying = ref(false)
+const readmeErrorMessage = ref('')
+const readmeRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
 const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
 const retryDisabled = computed(() => languageRetrying.value || retryState.value.disabled)
+const readmeRetryState = computed(() =>
+  retryAvailability(readmeRetryAvailableAt.value, currentTime.value),
+)
+const readmeRetryDisabled = computed(() =>
+  readmeRetrying.value || readmeRetryState.value.disabled,
+)
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let guideVersion = 0
 
@@ -53,8 +65,11 @@ onBeforeUnmount(() => {
 async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = true) {
   guideVersion += 1
   languageRetrying.value = false
+  readmeRetrying.value = false
   languageErrorMessage.value = ''
+  readmeErrorMessage.value = ''
   retryAvailableAt.value = null
+  readmeRetryAvailableAt.value = null
   status.value = 'submitting'
   guide.value = null
   errorMessage.value = ''
@@ -62,6 +77,7 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
   try {
     guide.value = await createGuide(repositoryUrl)
     initializeLanguageState()
+    initializeReadmeState()
     status.value = 'success'
   } catch (error) {
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
@@ -73,6 +89,74 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
       ? error.message
       : '发生了意料之外的错误，请稍后重试。'
     status.value = 'error'
+  }
+}
+
+async function retryReadmeRegion(
+  allowAuthenticationRecovery = true,
+  requestedGuideVersion = guideVersion,
+) {
+  if (!guide.value || readmeRetryDisabled.value || requestedGuideVersion !== guideVersion) {
+    return
+  }
+
+  const requestedCanonicalUrl = guide.value.repository.canonicalUrl
+  readmeRetrying.value = true
+  readmeErrorMessage.value = ''
+  try {
+    const retried = await retryReadme(requestedCanonicalUrl)
+    if (!isCurrentReadmeRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    guide.value = applyReadmeRetry(guide.value, retried)
+    initializeReadmeState()
+  } catch (error) {
+    if (!isCurrentReadmeRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
+      emit('authenticationRequired', () => retryReadmeRegion(false, requestedGuideVersion))
+      return
+    }
+    if (error instanceof GuideApiError && error.code === 'README_CONTENT_UNSUPPORTED') {
+      guide.value = {
+        ...guide.value,
+        readme: {
+          status: 'FAILED',
+          candidates: [],
+          truncated: false,
+          failure: {
+            code: 'README_CONTENT_UNSUPPORTED',
+            retryable: false,
+            retryAfterSeconds: null,
+          },
+        },
+      }
+      readmeRetryAvailableAt.value = null
+    }
+    readmeErrorMessage.value = error instanceof GuideApiError
+      ? messageForReadmeCode(error.code, error.message)
+      : 'README 区域暂时无法更新，请稍后重试。'
+    setReadmeRetryDeadline(error instanceof GuideApiError ? error.retryAfterSeconds : null)
+  } finally {
+    if (isCurrentReadmeRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      readmeRetrying.value = false
+    }
   }
 }
 
@@ -139,10 +223,27 @@ function initializeLanguageState() {
   setRetryDeadline(failure?.retryAfterSeconds)
 }
 
+function initializeReadmeState() {
+  if (!guide.value || guide.value.readme.status !== 'FAILED') {
+    readmeErrorMessage.value = ''
+    readmeRetryAvailableAt.value = null
+    return
+  }
+  const failure = guide.value.readme.failure
+  readmeErrorMessage.value = messageForReadmeCode(failure?.code)
+  setReadmeRetryDeadline(failure?.retryAfterSeconds)
+}
+
 function setRetryDeadline(retryAfterSeconds?: number | null) {
   const now = Date.now()
   currentTime.value = now
   retryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
+}
+
+function setReadmeRetryDeadline(retryAfterSeconds?: number | null) {
+  const now = Date.now()
+  currentTime.value = now
+  readmeRetryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
 }
 </script>
 
@@ -168,13 +269,19 @@ function setRetryDeadline(retryAfterSeconds?: number | null) {
         <RepositoryIdentityCard
           v-if="status === 'success' && guide"
           :repository="guide.repository"
+          :readme="guide.readme"
           :languages="guide.languages"
           :evidence="guide.evidence"
           :language-retrying="languageRetrying"
           :retry-disabled="retryDisabled"
           :retry-message="retryState.message"
           :language-error-message="languageErrorMessage"
+          :readme-retrying="readmeRetrying"
+          :readme-retry-disabled="readmeRetryDisabled"
+          :readme-retry-message="readmeRetryState.message"
+          :readme-error-message="readmeErrorMessage"
           @retry-languages="retryLanguageRegion"
+          @retry-readme="retryReadmeRegion"
         />
         <div v-else-if="status === 'error'" class="error-message" role="alert">
           <span aria-hidden="true">!</span>

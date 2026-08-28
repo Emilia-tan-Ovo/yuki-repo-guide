@@ -2,6 +2,7 @@ package io.github.emiliatanovo.yukirepoguide.web;
 
 import io.github.emiliatanovo.yukirepoguide.auth.application.TooManyLoginAttemptsException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRepositoryUrlException;
 import org.springframework.http.HttpHeaders;
@@ -34,6 +35,18 @@ public final class GlobalExceptionHandler {
 					Long.toString(exception.retryAfterSeconds()));
 		}
 		return response.body(problem);
+	}
+
+	@ExceptionHandler(ReadmeContentUnsupportedException.class)
+	public ProblemDetail handleReadmeContentUnsupported(
+			ReadmeContentUnsupportedException exception) {
+		var problem = ProblemDetail.forStatusAndDetail(
+				HttpStatus.UNPROCESSABLE_CONTENT,
+				"README 内容格式暂不受支持，无法识别在线体验入口。");
+		problem.setTitle("README 内容不受支持");
+		problem.setProperty("code", GuideErrorCode.README_CONTENT_UNSUPPORTED.name());
+		problem.setProperty("retryable", false);
+		return problem;
 	}
 
 	@ExceptionHandler(TooManyLoginAttemptsException.class)
@@ -106,6 +119,10 @@ public final class GlobalExceptionHandler {
 					HttpStatus.GATEWAY_TIMEOUT,
 					"GitHub 请求超时",
 					"连接 GitHub 超时，请检查网络状况或稍后重试。");
+			case README_CONTENT_UNSUPPORTED -> new GitHubErrorPresentation(
+					HttpStatus.UNPROCESSABLE_CONTENT,
+					"README 内容不受支持",
+					"README 内容格式暂不受支持，无法识别在线体验入口。");
 		};
 	}
 

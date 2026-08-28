@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Evidence, LanguageSection, RepositorySummary } from '../guideTypes'
+import type { Evidence, LanguageSection, ReadmeSection, RepositorySummary } from '../guideTypes'
+import OnlineExperienceSection from './OnlineExperienceSection.vue'
 
 const props = defineProps<{
   repository: RepositorySummary
+  readme: ReadmeSection
   languages: LanguageSection
   evidence: Record<string, Evidence>
   languageRetrying: boolean
   retryDisabled: boolean
   retryMessage: string
   languageErrorMessage: string
+  readmeRetrying: boolean
+  readmeRetryDisabled: boolean
+  readmeRetryMessage: string
+  readmeErrorMessage: string
 }>()
 
 defineEmits<{
   retryLanguages: []
+  retryReadme: []
 }>()
 
 const repositoryEvidence = computed(() => props.evidence[props.repository.evidenceId])
@@ -81,9 +88,19 @@ function barWidth(value: number): string {
 
     <div class="repository-links">
       <span>来源：GitHub</span>
-      <a :href="repository.canonicalUrl" target="_blank" rel="noreferrer">
-        查看原仓库 <span aria-hidden="true">↗</span>
-      </a>
+      <div>
+        <a :href="repository.canonicalUrl" target="_blank" rel="noopener noreferrer">
+          查看原仓库 <span aria-hidden="true">↗</span>
+        </a>
+        <a
+          v-if="repository.projectWebsiteUrl"
+          :href="repository.projectWebsiteUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          项目主页（元数据，未验证） <span aria-hidden="true">↗</span>
+        </a>
+      </div>
     </div>
 
     <details v-if="repositoryEvidence" class="evidence-panel">
@@ -96,6 +113,16 @@ function barWidth(value: number): string {
         </p>
       </div>
     </details>
+
+    <OnlineExperienceSection
+      :readme="readme"
+      :evidence="evidence"
+      :retrying="readmeRetrying"
+      :retry-disabled="readmeRetryDisabled"
+      :retry-message="readmeRetryMessage"
+      :error-message="readmeErrorMessage"
+      @retry="$emit('retryReadme')"
+    />
 
     <section class="language-section" aria-labelledby="language-title">
       <div class="section-heading">
@@ -277,6 +304,13 @@ a:hover {
   font-size: 0.84rem;
 }
 
+.repository-links > div {
+  display: grid;
+  gap: 0.35rem;
+  justify-items: end;
+  text-align: right;
+}
+
 .language-section {
   display: grid;
   gap: 1rem;
@@ -422,6 +456,11 @@ a:hover {
   .repository-links {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .repository-links > div {
+    justify-items: start;
+    text-align: left;
   }
 }
 </style>

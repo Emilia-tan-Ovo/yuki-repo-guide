@@ -1,6 +1,5 @@
 package io.github.emiliatanovo.yukirepoguide.guide.github;
 
-import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryFactsSource;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,7 +19,7 @@ public class GitHubConfiguration {
 	}
 
 	@Bean
-	RepositoryFactsSource gitHubRepositoryFactsSource(
+	GitHubRepositoryFactsAdapter gitHubRepositoryFactsSource(
 			RestClient.Builder builder,
 			GitHubProperties properties,
 			GitHubRateLimitGate rateLimitGate,
