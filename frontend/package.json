@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "test": "node --test tests/*.test.mjs",
+    "test": "npm run test:legacy-logic && npm run test:vitest",
+    "test:legacy-logic": "node --test tests/*.test.mjs",
+    "test:vitest": "vitest run",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview"
   },
@@ -15,9 +17,12 @@
   "devDependencies": {
     "@types/node": "^24.13.3",
     "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.5.0",
     "@vue/tsconfig": "^0.9.1",
+    "jsdom": "^30.0.1",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
+    "vitest": "^4.1.11",
     "vue-tsc": "^3.3.8"
   }
 }

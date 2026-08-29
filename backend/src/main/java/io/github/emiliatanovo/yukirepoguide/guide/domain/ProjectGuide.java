@@ -5,6 +5,7 @@ import java.util.Map;
 public record ProjectGuide(
 		RepositoryFacts repository,
 		String repositoryEvidenceId,
+		ReadmeSection readme,
 		LanguageSection languages,
 		Map<String, GuideEvidence> evidence) {
 

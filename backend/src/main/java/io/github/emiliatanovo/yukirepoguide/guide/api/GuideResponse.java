@@ -9,7 +9,13 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageShare;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ProjectGuide;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RawFact;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeFailure;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSection;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceCandidate;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceWarning;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -19,6 +25,7 @@ import java.util.Map;
 
 public record GuideResponse(
 		Repository repository,
+		Readme readme,
 		Languages languages,
 		Map<String, Evidence> evidence) {
 
@@ -36,7 +43,9 @@ public record GuideResponse(
 						facts.stars(),
 						facts.createdAt(),
 						facts.pushedAt(),
+						facts.projectWebsiteUrl(),
 						guide.repositoryEvidenceId()),
+				Readme.from(guide.readme()),
 				Languages.from(guide.languages()),
 				evidence);
 	}
@@ -49,7 +58,55 @@ public record GuideResponse(
 			long stars,
 			Instant createdAt,
 			Instant pushedAt,
+			String projectWebsiteUrl,
 			String evidenceId) {
+	}
+
+	public record Readme(
+			ReadmeSectionStatus status,
+			List<OnlineExperience> candidates,
+			boolean truncated,
+			ReadmeFailureResponse failure) {
+
+		public Readme {
+			candidates = List.copyOf(candidates);
+		}
+
+		public static Readme from(ReadmeSection section) {
+			return new Readme(
+					section.status(),
+					section.candidates().stream().map(OnlineExperience::from).toList(),
+					section.truncated(),
+					ReadmeFailureResponse.from(section.failure()));
+		}
+	}
+
+	public record OnlineExperience(
+			String label,
+			String url,
+			String evidenceId,
+			List<OnlineExperienceWarning> warnings) {
+
+		private static OnlineExperience from(OnlineExperienceCandidate candidate) {
+			return new OnlineExperience(
+					candidate.label(),
+					candidate.url(),
+					candidate.evidenceId(),
+					candidate.warnings());
+		}
+	}
+
+	public record ReadmeFailureResponse(
+			GuideErrorCode code,
+			boolean retryable,
+			Long retryAfterSeconds) {
+
+		private static ReadmeFailureResponse from(ReadmeFailure failure) {
+			return failure == null
+					? null
+					: new ReadmeFailureResponse(
+							failure.code(), failure.retryable(), failure.retryAfterSeconds());
+		}
 	}
 
 	public record Languages(
@@ -91,7 +148,11 @@ public record GuideResponse(
 			String repositoryUrl,
 			RawFactResponse recentCodeUpdate,
 			Long totalBytes,
-			List<LanguageEvidenceItem> languages) {
+			List<LanguageEvidenceItem> languages,
+			String readmeUrl,
+			String path,
+			String sha,
+			String context) {
 
 		public static Evidence from(GuideEvidence evidence) {
 			if (evidence instanceof RepositoryEvidence repository) {
@@ -101,16 +162,37 @@ public record GuideResponse(
 						repository.repositoryUrl(),
 						RawFactResponse.from(repository.recentCodeUpdate()),
 						null,
-						List.of());
+						List.of(),
+						null,
+						null,
+						null,
+						null);
 			}
-			LanguageEvidence languages = (LanguageEvidence) evidence;
+			if (evidence instanceof LanguageEvidence languages) {
+				return new Evidence(
+						"LANGUAGES",
+						languages.source(),
+						null,
+						null,
+						languages.totalBytes(),
+						languages.items().stream().map(LanguageEvidenceItem::from).toList(),
+						null,
+						null,
+						null,
+						null);
+			}
+			ReadmeEvidence readme = (ReadmeEvidence) evidence;
 			return new Evidence(
-					"LANGUAGES",
-					languages.source(),
+					"README",
+					readme.source(),
 					null,
 					null,
-					languages.totalBytes(),
-					languages.items().stream().map(LanguageEvidenceItem::from).toList());
+					null,
+					List.of(),
+					readme.readmeUrl(),
+					readme.path(),
+					readme.sha(),
+					readme.context());
 		}
 	}
 

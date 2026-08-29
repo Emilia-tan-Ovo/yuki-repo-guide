@@ -6,6 +6,7 @@ export interface RepositorySummary {
   stars: number
   createdAt: string
   pushedAt: string | null
+  projectWebsiteUrl: string | null
   evidenceId: string
 }
 
@@ -15,6 +16,33 @@ export type GuideErrorCode =
   | 'GITHUB_UPSTREAM_FAILURE'
   | 'GITHUB_SERVICE_UNAVAILABLE'
   | 'GITHUB_TIMEOUT'
+  | 'README_CONTENT_UNSUPPORTED'
+
+export type ReadmeSectionStatus = 'AVAILABLE' | 'NOT_PROVIDED' | 'FAILED'
+
+export type OnlineExperienceWarning =
+  | 'EXTERNAL_SITE_NOT_VERIFIED'
+  | 'INSECURE_HTTP'
+
+export interface OnlineExperienceCandidate {
+  label: string
+  url: string
+  evidenceId: string
+  warnings: OnlineExperienceWarning[]
+}
+
+export interface ReadmeFailure {
+  code: GuideErrorCode
+  retryable: boolean
+  retryAfterSeconds?: number | null
+}
+
+export interface ReadmeSection {
+  status: ReadmeSectionStatus
+  candidates: OnlineExperienceCandidate[]
+  truncated: boolean
+  failure?: ReadmeFailure | null
+}
 
 export type LanguageSectionStatus = 'AVAILABLE' | 'NOT_PROVIDED' | 'FAILED'
 
@@ -36,17 +64,27 @@ export interface LanguageSection {
 }
 
 export interface Evidence {
-  type: 'REPOSITORY' | 'LANGUAGES'
+  type: 'REPOSITORY' | 'LANGUAGES' | 'README'
   source: string
   repositoryUrl?: string | null
   recentCodeUpdate?: { field: string; value: string } | null
   totalBytes?: number | null
   languages: Array<LanguageItem & { bytes: number }>
+  readmeUrl?: string | null
+  path?: string | null
+  sha?: string | null
+  context?: string | null
 }
 
 export interface GuideResponse {
   repository: RepositorySummary
+  readme: ReadmeSection
   languages: LanguageSection
+  evidence: Record<string, Evidence>
+}
+
+export interface ReadmeRetryResponse {
+  readme: ReadmeSection
   evidence: Record<string, Evidence>
 }
 
@@ -62,6 +100,7 @@ export interface ProblemDetail {
   code?: string
   field?: string
   retryAfterSeconds?: number
+  retryable?: boolean
 }
 
 export type GuideStatus = 'idle' | 'submitting' | 'success' | 'error'

@@ -1,6 +1,7 @@
 package io.github.emiliatanovo.yukirepoguide.guide.github;
 
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import org.junit.jupiter.api.Test;
@@ -18,7 +19,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.net.SocketTimeoutException;
+import java.nio.charset.StandardCharsets;
 import java.util.stream.Stream;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
@@ -29,6 +32,100 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 
 class GitHubRepositoryFactsAdapterTest {
+
+	@Test
+	void fetchesAndDecodesReadmeWithoutFollowingLinksInItsContent() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		String markdown = "## Demo\n[Try it online](https://demo.example.com)\n";
+		String encoded = Base64.getEncoder().encodeToString(
+				markdown.getBytes(StandardCharsets.UTF_8));
+		server.expect(requestTo("https://api.github.com/repos/octo/example/readme"))
+				.andRespond(withSuccess("""
+						{
+						  "path": "README.md",
+						  "sha": "abc123",
+						  "html_url": "https://github.com/octo/example/blob/main/README.md",
+						  "size": %d,
+						  "encoding": "base64",
+						  "content": "%s"
+						}
+						""".formatted(markdown.getBytes(StandardCharsets.UTF_8).length, encoded),
+						MediaType.APPLICATION_JSON));
+
+		var result = adapter.fetchReadme(new RepositoryRef("octo", "example"));
+
+		assertThat(result).isPresent();
+		assertThat(result.orElseThrow().content()).isEqualTo(markdown);
+		assertThat(result.orElseThrow().path()).isEqualTo("README.md");
+		server.verify();
+	}
+
+	@Test
+	void mapsReadmeNotFoundToAbsenceAfterMetadataWasConfirmed() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo("https://api.github.com/repos/octo/example/readme"))
+				.andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+		var result = adapter.fetchReadme(new RepositoryRef("octo", "example"));
+
+		assertThat(result).isEmpty();
+		server.verify();
+	}
+
+	@Test
+	void rejectsReadmeThatExceedsTheDecodedOneMebibyteLimit() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo("https://api.github.com/repos/octo/example/readme"))
+				.andRespond(withSuccess("""
+						{
+						  "path": "README.md",
+						  "sha": "abc123",
+						  "html_url": "https://github.com/octo/example/blob/main/README.md",
+						  "size": 1048577,
+						  "encoding": "base64",
+						  "content": "YQ=="
+						}
+						""", MediaType.APPLICATION_JSON));
+
+		ReadmeContentUnsupportedException failure = catchThrowableOfType(
+				ReadmeContentUnsupportedException.class,
+				() -> adapter.fetchReadme(new RepositoryRef("octo", "example")));
+
+		assertThat(failure).isNotNull();
+		server.verify();
+	}
+
+	@Test
+	void rejectsReadmeThatIsNotValidUtf8() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		String encoded = Base64.getEncoder().encodeToString(new byte[] {(byte) 0xC3, 0x28});
+		server.expect(requestTo("https://api.github.com/repos/octo/example/readme"))
+				.andRespond(withSuccess("""
+						{
+						  "path": "README.md",
+						  "sha": "abc123",
+						  "html_url": "https://github.com/octo/example/blob/main/README.md",
+						  "size": 2,
+						  "encoding": "base64",
+						  "content": "%s"
+						}
+						""".formatted(encoded), MediaType.APPLICATION_JSON));
+
+		ReadmeContentUnsupportedException failure = catchThrowableOfType(
+				ReadmeContentUnsupportedException.class,
+				() -> adapter.fetchReadme(new RepositoryRef("octo", "example")));
+
+		assertThat(failure).isNotNull();
+		server.verify();
+	}
 
 	@Test
 	void treatsMalformedMetadataAsAnUpstreamFailure() {
@@ -339,6 +436,7 @@ class GitHubRepositoryFactsAdapterTest {
 						  "name": "renamed-example",
 						  "owner": {"login": "octocat"},
 						  "description": "A traceable repository guide",
+						  "homepage": "https://example.com/project",
 						  "stargazers_count": 321,
 						  "created_at": "2024-01-10T08:30:00Z",
 						  "pushed_at": "2026-08-24T12:00:00Z"
@@ -352,6 +450,7 @@ class GitHubRepositoryFactsAdapterTest {
 		assertThat(result.stars()).isEqualTo(321);
 		assertThat(result.createdAt()).isEqualTo(Instant.parse("2024-01-10T08:30:00Z"));
 		assertThat(result.pushedAt()).isEqualTo(Instant.parse("2026-08-24T12:00:00Z"));
+		assertThat(result.projectWebsiteUrl()).isEqualTo("https://example.com/project");
 		server.verify();
 	}
 
