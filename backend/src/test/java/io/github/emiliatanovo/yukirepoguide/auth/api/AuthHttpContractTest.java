@@ -2,9 +2,13 @@ package io.github.emiliatanovo.yukirepoguide.auth.api;
 
 import com.jayway.jsonpath.JsonPath;
 import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryReadmeSource;
+import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryReleaseSource;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReadmeSource;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReleaseSource;
 import io.github.emiliatanovo.yukirepoguide.support.TestTrialAccess;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -207,6 +211,18 @@ class AuthHttpContractTest {
 					123,
 					Instant.parse("2026-08-01T00:00:00Z"),
 					Instant.parse("2026-08-24T12:00:00Z")));
+		}
+
+		@Bean
+		@Primary
+		RepositoryReadmeSource fakeRepositoryReadmeSource() {
+			return FakeRepositoryReadmeSource.withoutReadme();
+		}
+
+		@Bean
+		@Primary
+		RepositoryReleaseSource fakeRepositoryReleaseSource() {
+			return FakeRepositoryReleaseSource.withoutReleases();
 		}
 	}
 }

@@ -6,8 +6,10 @@ import {
   GuideAuthenticationRequiredError,
   messageForLanguageCode,
   messageForReadmeCode,
+  messageForReleaseCode,
   retryReadme,
   retryLanguages,
+  retryReleases,
 } from './guideApi'
 import {
   applyLanguageRetry,
@@ -16,6 +18,7 @@ import {
   retryAvailability,
 } from './languageRetry'
 import { applyReadmeRetry, isCurrentReadmeRetry } from './readmeRetry'
+import { applyReleaseRetry, isCurrentReleaseRetry } from './releaseRetry'
 import type { GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
@@ -37,6 +40,9 @@ const languageErrorMessage = ref('')
 const readmeRetrying = ref(false)
 const readmeErrorMessage = ref('')
 const readmeRetryAvailableAt = ref<number | null>(null)
+const releaseRetrying = ref(false)
+const releaseErrorMessage = ref('')
+const releaseRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
 const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
@@ -46,6 +52,12 @@ const readmeRetryState = computed(() =>
 )
 const readmeRetryDisabled = computed(() =>
   readmeRetrying.value || readmeRetryState.value.disabled,
+)
+const releaseRetryState = computed(() =>
+  retryAvailability(releaseRetryAvailableAt.value, currentTime.value),
+)
+const releaseRetryDisabled = computed(() =>
+  releaseRetrying.value || releaseRetryState.value.disabled,
 )
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let guideVersion = 0
@@ -66,10 +78,13 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
   guideVersion += 1
   languageRetrying.value = false
   readmeRetrying.value = false
+  releaseRetrying.value = false
   languageErrorMessage.value = ''
   readmeErrorMessage.value = ''
+  releaseErrorMessage.value = ''
   retryAvailableAt.value = null
   readmeRetryAvailableAt.value = null
+  releaseRetryAvailableAt.value = null
   status.value = 'submitting'
   guide.value = null
   errorMessage.value = ''
@@ -78,6 +93,7 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
     guide.value = await createGuide(repositoryUrl)
     initializeLanguageState()
     initializeReadmeState()
+    initializeReleaseState()
     status.value = 'success'
   } catch (error) {
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
@@ -212,6 +228,74 @@ async function retryLanguageRegion(
   }
 }
 
+async function retryReleaseRegion(
+  allowAuthenticationRecovery = true,
+  requestedGuideVersion = guideVersion,
+) {
+  if (!guide.value || releaseRetryDisabled.value || requestedGuideVersion !== guideVersion) {
+    return
+  }
+
+  const requestedCanonicalUrl = guide.value.repository.canonicalUrl
+  releaseRetrying.value = true
+  releaseErrorMessage.value = ''
+  try {
+    const retried = await retryReleases(requestedCanonicalUrl)
+    if (!isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    guide.value = applyReleaseRetry(guide.value, retried)
+    initializeReleaseState()
+  } catch (error) {
+    if (!isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
+      emit('authenticationRequired', () => retryReleaseRegion(false, requestedGuideVersion))
+      return
+    }
+    if (error instanceof GuideApiError && error.code === 'RELEASE_HISTORY_UNSUPPORTED') {
+      guide.value = {
+        ...guide.value,
+        releases: {
+          status: 'FAILED',
+          latestStable: null,
+          latestPrerelease: null,
+          failure: {
+            code: 'RELEASE_HISTORY_UNSUPPORTED',
+            retryable: false,
+            retryAfterSeconds: null,
+          },
+        },
+      }
+      releaseRetryAvailableAt.value = null
+    }
+    releaseErrorMessage.value = error instanceof GuideApiError
+      ? messageForReleaseCode(error.code, error.message)
+      : 'Release 区域暂时无法更新，请稍后重试。'
+    setReleaseRetryDeadline(error instanceof GuideApiError ? error.retryAfterSeconds : null)
+  } finally {
+    if (isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      releaseRetrying.value = false
+    }
+  }
+}
+
 function initializeLanguageState() {
   if (!guide.value || guide.value.languages.status !== 'FAILED') {
     languageErrorMessage.value = ''
@@ -234,6 +318,17 @@ function initializeReadmeState() {
   setReadmeRetryDeadline(failure?.retryAfterSeconds)
 }
 
+function initializeReleaseState() {
+  if (!guide.value || guide.value.releases.status !== 'FAILED') {
+    releaseErrorMessage.value = ''
+    releaseRetryAvailableAt.value = null
+    return
+  }
+  const failure = guide.value.releases.failure
+  releaseErrorMessage.value = messageForReleaseCode(failure?.code)
+  setReleaseRetryDeadline(failure?.retryAfterSeconds)
+}
+
 function setRetryDeadline(retryAfterSeconds?: number | null) {
   const now = Date.now()
   currentTime.value = now
@@ -244,6 +339,12 @@ function setReadmeRetryDeadline(retryAfterSeconds?: number | null) {
   const now = Date.now()
   currentTime.value = now
   readmeRetryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
+}
+
+function setReleaseRetryDeadline(retryAfterSeconds?: number | null) {
+  const now = Date.now()
+  currentTime.value = now
+  releaseRetryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
 }
 </script>
 
@@ -258,7 +359,7 @@ function setReadmeRetryDeadline(retryAfterSeconds?: number | null) {
       </div>
       <h1 id="page-title">从一个地址开始，<br /><em>轻松认识 GitHub 项目。</em></h1>
       <p class="intro">
-        粘贴仓库链接，我们会从 GitHub 读取可追溯的基础事实，先陪你看清这个项目的身份、活跃时间和语言分布。
+        粘贴仓库链接，我们会从 GitHub 读取可追溯的基础事实，先陪你看清这个项目的身份、活跃时间、语言分布和最新发布版本。
       </p>
     </section>
 
@@ -271,6 +372,7 @@ function setReadmeRetryDeadline(retryAfterSeconds?: number | null) {
           :repository="guide.repository"
           :readme="guide.readme"
           :languages="guide.languages"
+          :releases="guide.releases"
           :evidence="guide.evidence"
           :language-retrying="languageRetrying"
           :retry-disabled="retryDisabled"
@@ -280,8 +382,13 @@ function setReadmeRetryDeadline(retryAfterSeconds?: number | null) {
           :readme-retry-disabled="readmeRetryDisabled"
           :readme-retry-message="readmeRetryState.message"
           :readme-error-message="readmeErrorMessage"
+          :release-retrying="releaseRetrying"
+          :release-retry-disabled="releaseRetryDisabled"
+          :release-retry-message="releaseRetryState.message"
+          :release-error-message="releaseErrorMessage"
           @retry-languages="retryLanguageRegion"
           @retry-readme="retryReadmeRegion"
+          @retry-releases="retryReleaseRegion"
         />
         <div v-else-if="status === 'error'" class="error-message" role="alert">
           <span aria-hidden="true">!</span>

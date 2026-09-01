@@ -1,12 +1,14 @@
 package io.github.emiliatanovo.yukirepoguide.guide.application;
 
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageShare;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ProjectGuide;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RawFact;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSection;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
@@ -28,17 +30,23 @@ public final class GuideService {
 	private final RepositoryUrlParser repositoryUrlParser;
 	private final RepositoryFactsSource repositoryFactsSource;
 	private final RepositoryReadmeSource repositoryReadmeSource;
+	private final RepositoryReleaseSource repositoryReleaseSource;
 	private final OnlineExperienceRecognizer onlineExperienceRecognizer;
+	private final ReleaseInterpreter releaseInterpreter;
 
 	public GuideService(
 			RepositoryUrlParser repositoryUrlParser,
 			RepositoryFactsSource repositoryFactsSource,
 			RepositoryReadmeSource repositoryReadmeSource,
-			OnlineExperienceRecognizer onlineExperienceRecognizer) {
+			RepositoryReleaseSource repositoryReleaseSource,
+			OnlineExperienceRecognizer onlineExperienceRecognizer,
+			ReleaseInterpreter releaseInterpreter) {
 		this.repositoryUrlParser = repositoryUrlParser;
 		this.repositoryFactsSource = repositoryFactsSource;
 		this.repositoryReadmeSource = repositoryReadmeSource;
+		this.repositoryReleaseSource = repositoryReleaseSource;
 		this.onlineExperienceRecognizer = onlineExperienceRecognizer;
+		this.releaseInterpreter = releaseInterpreter;
 	}
 
 	public ProjectGuide createGuide(String rawUrl) {
@@ -60,7 +68,24 @@ public final class GuideService {
 		catch (GitHubSourceException exception) {
 			languages = LanguageSection.failed(exception.code(), exception.retryAfterSeconds());
 		}
-		return new ProjectGuide(repository, REPOSITORY_EVIDENCE_ID, readme, languages, evidence);
+		ReleaseSection releases;
+		try {
+			releases = releaseInterpreter.interpret(
+					repositoryReleaseSource.fetchReleases(repository.reference()));
+			evidence.putAll(releases.evidence());
+		}
+		catch (GitHubSourceException exception) {
+			releases = ReleaseSection.failed(
+					exception.code(), true, exception.retryAfterSeconds());
+		}
+		catch (ReleaseHistoryUnsupportedException exception) {
+			releases = ReleaseSection.failed(
+					GuideErrorCode.RELEASE_HISTORY_UNSUPPORTED,
+					false,
+					null);
+		}
+		return new ProjectGuide(
+				repository, REPOSITORY_EVIDENCE_ID, readme, languages, releases, evidence);
 	}
 
 	private ReadmeSection initialReadmeSection(RepositoryRef repository) {
@@ -71,7 +96,7 @@ public final class GuideService {
 		}
 		catch (ReadmeContentUnsupportedException exception) {
 			return ReadmeSection.failed(
-					io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode.README_CONTENT_UNSUPPORTED,
+					GuideErrorCode.README_CONTENT_UNSUPPORTED,
 					false,
 					null);
 		}
@@ -91,6 +116,11 @@ public final class GuideService {
 	public LanguageSection retryLanguages(String canonicalUrl) {
 		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
 		return languageSection(repositoryFactsSource.fetchLanguages(repository));
+	}
+
+	public ReleaseSection retryReleases(String canonicalUrl) {
+		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
+		return releaseInterpreter.interpret(repositoryReleaseSource.fetchReleases(repository));
 	}
 
 	private LanguageSection languageSection(RepositoryLanguageBytes languageBytes) {

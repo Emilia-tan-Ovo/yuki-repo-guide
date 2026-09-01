@@ -16,6 +16,15 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceCandidate;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceWarning;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseChannel;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseFailure;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSection;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSectionStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSummary;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseWarning;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -27,6 +36,7 @@ public record GuideResponse(
 		Repository repository,
 		Readme readme,
 		Languages languages,
+		Releases releases,
 		Map<String, Evidence> evidence) {
 
 	public static GuideResponse from(ProjectGuide guide) {
@@ -47,6 +57,7 @@ public record GuideResponse(
 						guide.repositoryEvidenceId()),
 				Readme.from(guide.readme()),
 				Languages.from(guide.languages()),
+				Releases.from(guide.releases()),
 				evidence);
 	}
 
@@ -142,6 +153,74 @@ public record GuideResponse(
 		}
 	}
 
+	public record Releases(
+			ReleaseSectionStatus status,
+			Release latestStable,
+			Release latestPrerelease,
+			ReleaseFailureResponse failure) {
+
+		public static Releases from(ReleaseSection section) {
+			return new Releases(
+					section.status(),
+					Release.from(section.latestStable()),
+					Release.from(section.latestPrerelease()),
+					ReleaseFailureResponse.from(section.failure()));
+		}
+	}
+
+	public record Release(
+			String name,
+			String tagName,
+			Instant publishedAt,
+			List<Asset> assets,
+			int reportedAssetCount,
+			int excludedAssetCount,
+			boolean assetsTruncated,
+			List<ReleaseWarning> warnings,
+			String evidenceId) {
+
+		public Release {
+			assets = List.copyOf(assets);
+			warnings = List.copyOf(warnings);
+		}
+
+		private static Release from(ReleaseSummary summary) {
+			return summary == null
+					? null
+					: new Release(
+							summary.name(),
+							summary.tagName(),
+							summary.publishedAt(),
+							summary.assets().stream().map(Asset::from).toList(),
+							summary.reportedAssetCount(),
+							summary.excludedAssetCount(),
+							summary.assetsTruncated(),
+							summary.warnings(),
+							summary.evidenceId());
+		}
+	}
+
+	public record Asset(String name, long sizeBytes, String downloadUrl, String evidenceId) {
+
+		private static Asset from(ReleaseAsset asset) {
+			return new Asset(
+					asset.name(), asset.sizeBytes(), asset.downloadUrl(), asset.evidenceId());
+		}
+	}
+
+	public record ReleaseFailureResponse(
+			GuideErrorCode code,
+			boolean retryable,
+			Long retryAfterSeconds) {
+
+		private static ReleaseFailureResponse from(ReleaseFailure failure) {
+			return failure == null
+					? null
+					: new ReleaseFailureResponse(
+							failure.code(), failure.retryable(), failure.retryAfterSeconds());
+		}
+	}
+
 	public record Evidence(
 			String type,
 			String source,
@@ -152,7 +231,18 @@ public record GuideResponse(
 			String readmeUrl,
 			String path,
 			String sha,
-			String context) {
+			String context,
+			String releaseUrl,
+			Long releaseId,
+			String tagName,
+			Instant publishedAt,
+			ReleaseChannel channel,
+			Integer reportedAssetCount,
+			String releaseEvidenceId,
+			Long assetId,
+			String assetName,
+			Long sizeBytes,
+			String downloadUrl) {
 
 		public static Evidence from(GuideEvidence evidence) {
 			if (evidence instanceof RepositoryEvidence repository) {
@@ -163,6 +253,17 @@ public record GuideResponse(
 						RawFactResponse.from(repository.recentCodeUpdate()),
 						null,
 						List.of(),
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
 						null,
 						null,
 						null,
@@ -179,20 +280,40 @@ public record GuideResponse(
 						null,
 						null,
 						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
+						null,
 						null);
 			}
-			ReadmeEvidence readme = (ReadmeEvidence) evidence;
+			if (evidence instanceof ReadmeEvidence readme) {
+				return new Evidence(
+						"README", readme.source(), null, null, null, List.of(),
+						readme.readmeUrl(), readme.path(), readme.sha(), readme.context(),
+						null, null, null, null, null, null, null, null, null, null, null);
+			}
+			if (evidence instanceof ReleaseEvidence release) {
+				return new Evidence(
+						"RELEASE", release.source(), null, null, null, List.of(),
+						null, null, null, null,
+						release.releaseUrl(), release.releaseId(), release.tagName(),
+						release.publishedAt(), release.channel(), release.reportedAssetCount(),
+						null, null, null, null, null);
+			}
+			ReleaseAssetEvidence asset = (ReleaseAssetEvidence) evidence;
 			return new Evidence(
-					"README",
-					readme.source(),
-					null,
-					null,
-					null,
-					List.of(),
-					readme.readmeUrl(),
-					readme.path(),
-					readme.sha(),
-					readme.context());
+					"RELEASE_ASSET", asset.source(), null, null, null, List.of(),
+					null, null, null, null,
+					null, null, null, null, null, null,
+					asset.releaseEvidenceId(), asset.assetId(), asset.name(),
+					asset.sizeBytes(), asset.downloadUrl());
 		}
 	}
 

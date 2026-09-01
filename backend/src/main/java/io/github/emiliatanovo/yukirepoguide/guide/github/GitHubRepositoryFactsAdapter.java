@@ -3,17 +3,23 @@ package io.github.emiliatanovo.yukirepoguide.guide.github;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryFactsSource;
+import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryReleaseSource;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.RepositoryReadmeSource;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRelease;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.ResourceAccessException;
@@ -33,20 +39,26 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class GitHubRepositoryFactsAdapter
-		implements RepositoryFactsSource, RepositoryReadmeSource {
+		implements RepositoryFactsSource, RepositoryReadmeSource, RepositoryReleaseSource {
 
 	private static final String API_BASE_URL = "https://api.github.com";
 	private static final long MAX_README_BYTES = 1024L * 1024L;
 	private static final int MAX_ENCODED_README_CHARACTERS = 1_500_000;
 	private static final Pattern REPOSITORY_REDIRECT_PATH =
 			Pattern.compile("^/repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$");
+	private static final Pattern NEXT_LINK = Pattern.compile(
+			"<([^>]+)>;\\s*rel=(?:\\\"next\\\"|next)(?=\\s*(?:;|,|$))");
+	private static final int RELEASES_PER_PAGE = 100;
+	private static final int MAX_RELEASE_PAGES = 10;
 	private final RestClient restClient;
 	private final GitHubRateLimitGate rateLimitGate;
 	private final Clock clock;
@@ -132,6 +144,144 @@ public final class GitHubRepositoryFactsAdapter
 				decodeReadme(response)));
 	}
 
+	@Override
+	public RepositoryReleases fetchReleases(RepositoryRef repositoryRef) {
+		List<RepositoryRelease> releases = new ArrayList<>();
+		for (int page = 1; page <= MAX_RELEASE_PAGES; page++) {
+			int requestedPage = page;
+			ResponseEntity<List<GitHubReleaseResponse>> response = execute(() -> restClient.get()
+					.uri("/repos/{owner}/{repository}/releases?per_page={perPage}&page={page}",
+							repositoryRef.owner(),
+							repositoryRef.name(),
+							RELEASES_PER_PAGE,
+							requestedPage)
+					.retrieve()
+					.onStatus(HttpStatusCode::isError, (request, upstreamResponse) -> {
+						throw classify(upstreamResponse.getStatusCode(), upstreamResponse.getHeaders());
+					})
+					.toEntity(new ParameterizedTypeReference<>() {
+					}));
+			List<GitHubReleaseResponse> pageItems = response.getBody();
+			if (pageItems == null || pageItems.size() > RELEASES_PER_PAGE) {
+				throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+			}
+			pageItems.stream()
+					.map(this::repositoryRelease)
+					.forEach(releases::add);
+			if (!hasNextPage(response.getHeaders(), repositoryRef, page)) {
+				return new RepositoryReleases(releases);
+			}
+		}
+		throw new ReleaseHistoryUnsupportedException();
+	}
+
+	private boolean hasNextPage(
+			HttpHeaders headers,
+			RepositoryRef repositoryRef,
+			int currentPage) {
+		for (String header : headers.getOrEmpty(HttpHeaders.LINK)) {
+			Matcher matcher = NEXT_LINK.matcher(header);
+			if (matcher.find()) {
+				URI next = safeNextReleasePage(matcher.group(1), repositoryRef, currentPage + 1);
+				return next != null;
+			}
+		}
+		return false;
+	}
+
+	private URI safeNextReleasePage(
+			String rawUrl,
+			RepositoryRef repositoryRef,
+			int expectedPage) {
+		try {
+			URI uri = URI.create(rawUrl);
+			String expectedPath = "/repos/" + repositoryRef.owner() + "/"
+					+ repositoryRef.name() + "/releases";
+			if (!"https".equalsIgnoreCase(uri.getScheme())
+					|| !"api.github.com".equalsIgnoreCase(uri.getHost())
+					|| uri.getPort() != -1
+					|| uri.getUserInfo() != null
+					|| !expectedPath.equals(uri.getPath())
+					|| !queryContains(uri.getRawQuery(), "per_page", String.valueOf(RELEASES_PER_PAGE))
+					|| !queryContains(uri.getRawQuery(), "page", String.valueOf(expectedPage))) {
+				throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+			}
+			return uri;
+		}
+		catch (IllegalArgumentException exception) {
+			throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		}
+	}
+
+	private boolean queryContains(String rawQuery, String expectedName, String expectedValue) {
+		if (rawQuery == null) {
+			return false;
+		}
+		return List.of(rawQuery.split("&")).stream()
+				.map(parameter -> parameter.split("=", 2))
+				.anyMatch(parameter -> parameter.length == 2
+						&& expectedName.equals(parameter[0])
+						&& expectedValue.equals(parameter[1]));
+	}
+
+	private RepositoryRelease repositoryRelease(GitHubReleaseResponse response) {
+		if (response == null
+				|| response.id() == null
+				|| response.id() <= 0
+				|| response.draft() == null
+				|| response.prerelease() == null) {
+			throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		}
+		if (response.draft()) {
+			return new RepositoryRelease(
+					response.id(), response.name(), response.tagName(), response.htmlUrl(),
+					response.publishedAt(), true, response.prerelease(), 0, 0, List.of());
+		}
+		String releaseUrl = safeGitHubHtmlUrl(response.htmlUrl());
+		if (response.tagName() == null
+				|| response.tagName().isBlank()
+				|| releaseUrl == null
+				|| response.publishedAt() == null
+				|| response.assets() == null) {
+			throw new GitHubSourceException(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		}
+		List<RepositoryReleaseAsset> validAssets = response.assets().stream()
+				.map(this::repositoryReleaseAsset)
+				.filter(Optional::isPresent)
+				.map(Optional::orElseThrow)
+				.toList();
+		return new RepositoryRelease(
+				response.id(),
+				response.name(),
+				response.tagName(),
+				releaseUrl,
+				response.publishedAt(),
+				false,
+				response.prerelease(),
+				response.assets().size(),
+				response.assets().size() - validAssets.size(),
+				validAssets);
+	}
+
+	private Optional<RepositoryReleaseAsset> repositoryReleaseAsset(
+			GitHubReleaseAssetResponse response) {
+		if (response == null
+				|| response.id() == null
+				|| response.id() <= 0
+				|| response.name() == null
+				|| response.name().isBlank()
+				|| response.size() == null
+				|| response.size() < 0
+				|| !"uploaded".equals(response.state())) {
+			return Optional.empty();
+		}
+		String downloadUrl = safeGitHubHtmlUrl(response.browserDownloadUrl());
+		return downloadUrl == null
+				? Optional.empty()
+				: Optional.of(new RepositoryReleaseAsset(
+						response.id(), response.name(), response.size(), downloadUrl));
+	}
+
 	private String decodeReadme(GitHubReadmeResponse response) {
 		if (response.size() == null
 				|| response.size() < 0
@@ -184,6 +334,7 @@ public final class GitHubRepositoryFactsAdapter
 		URI uri = URI.create(safeUrl);
 		return "https".equalsIgnoreCase(uri.getScheme())
 				&& "github.com".equalsIgnoreCase(uri.getHost())
+				&& uri.getPort() == -1
 				? safeUrl
 				: null;
 	}
@@ -398,6 +549,25 @@ public final class GitHubRepositoryFactsAdapter
 			Long size,
 			String encoding,
 			String content) {
+	}
+
+	private record GitHubReleaseResponse(
+			Long id,
+			String name,
+			@JsonProperty("tag_name") String tagName,
+			@JsonProperty("html_url") String htmlUrl,
+			Boolean draft,
+			Boolean prerelease,
+			@JsonProperty("published_at") Instant publishedAt,
+			List<GitHubReleaseAssetResponse> assets) {
+	}
+
+	private record GitHubReleaseAssetResponse(
+			Long id,
+			String name,
+			String state,
+			Long size,
+			@JsonProperty("browser_download_url") String browserDownloadUrl) {
 	}
 
 	private record GitHubOwner(String login) {

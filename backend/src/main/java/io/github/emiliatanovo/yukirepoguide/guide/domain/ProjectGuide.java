@@ -7,6 +7,7 @@ public record ProjectGuide(
 		String repositoryEvidenceId,
 		ReadmeSection readme,
 		LanguageSection languages,
+		ReleaseSection releases,
 		Map<String, GuideEvidence> evidence) {
 
 	public ProjectGuide {

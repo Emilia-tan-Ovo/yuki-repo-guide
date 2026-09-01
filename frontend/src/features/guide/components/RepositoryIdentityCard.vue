@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Evidence, LanguageSection, ReadmeSection, RepositorySummary } from '../guideTypes'
+import type {
+  Evidence,
+  LanguageSection,
+  ReadmeSection,
+  ReleaseSection as ReleaseSectionData,
+  RepositorySummary,
+} from '../guideTypes'
 import OnlineExperienceSection from './OnlineExperienceSection.vue'
+import ReleaseSection from './ReleaseSection.vue'
 
 const props = defineProps<{
   repository: RepositorySummary
   readme: ReadmeSection
   languages: LanguageSection
+  releases: ReleaseSectionData
   evidence: Record<string, Evidence>
   languageRetrying: boolean
   retryDisabled: boolean
@@ -16,11 +24,16 @@ const props = defineProps<{
   readmeRetryDisabled: boolean
   readmeRetryMessage: string
   readmeErrorMessage: string
+  releaseRetrying: boolean
+  releaseRetryDisabled: boolean
+  releaseRetryMessage: string
+  releaseErrorMessage: string
 }>()
 
 defineEmits<{
   retryLanguages: []
   retryReadme: []
+  retryReleases: []
 }>()
 
 const repositoryEvidence = computed(() => props.evidence[props.repository.evidenceId])
@@ -175,6 +188,16 @@ function barWidth(value: number): string {
         </div>
       </details>
     </section>
+
+    <ReleaseSection
+      :releases="releases"
+      :evidence="evidence"
+      :retrying="releaseRetrying"
+      :retry-disabled="releaseRetryDisabled"
+      :retry-message="releaseRetryMessage"
+      :error-message="releaseErrorMessage"
+      @retry="$emit('retryReleases')"
+    />
   </article>
 </template>
 
