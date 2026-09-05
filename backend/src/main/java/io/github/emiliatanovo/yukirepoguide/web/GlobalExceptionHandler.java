@@ -3,6 +3,7 @@ package io.github.emiliatanovo.yukirepoguide.web;
 import io.github.emiliatanovo.yukirepoguide.auth.application.TooManyLoginAttemptsException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRepositoryUrlException;
 import org.springframework.http.HttpHeaders;
@@ -45,6 +46,18 @@ public final class GlobalExceptionHandler {
 				"README 内容格式暂不受支持，无法识别在线体验入口。");
 		problem.setTitle("README 内容不受支持");
 		problem.setProperty("code", GuideErrorCode.README_CONTENT_UNSUPPORTED.name());
+		problem.setProperty("retryable", false);
+		return problem;
+	}
+
+	@ExceptionHandler(ReleaseHistoryUnsupportedException.class)
+	public ProblemDetail handleReleaseHistoryUnsupported(
+			ReleaseHistoryUnsupportedException exception) {
+		var problem = ProblemDetail.forStatusAndDetail(
+				HttpStatus.UNPROCESSABLE_CONTENT,
+				"该仓库的 Release 历史超过 1000 条，暂不支持完整导览。");
+		problem.setTitle("Release 历史超出支持范围");
+		problem.setProperty("code", GuideErrorCode.RELEASE_HISTORY_UNSUPPORTED.name());
 		problem.setProperty("retryable", false);
 		return problem;
 	}
@@ -123,6 +136,10 @@ public final class GlobalExceptionHandler {
 					HttpStatus.UNPROCESSABLE_CONTENT,
 					"README 内容不受支持",
 					"README 内容格式暂不受支持，无法识别在线体验入口。");
+			case RELEASE_HISTORY_UNSUPPORTED -> new GitHubErrorPresentation(
+					HttpStatus.UNPROCESSABLE_CONTENT,
+					"Release 历史超出支持范围",
+					"该仓库的 Release 历史超过当前导览支持范围。");
 		};
 	}
 

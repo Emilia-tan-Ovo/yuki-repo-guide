@@ -2,6 +2,7 @@ package io.github.emiliatanovo.yukirepoguide.guide.github;
 
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,188 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 
 class GitHubRepositoryFactsAdapterTest {
+
+	@Test
+	void fetchesCompleteReleasePagesAndExcludesUnsafeAssets() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo(
+				"https://api.github.com/repos/octo/example/releases?per_page=100&page=1"))
+				.andRespond(withSuccess("""
+						[
+						  {
+						    "id": 20,
+						    "name": "Version 2",
+						    "tag_name": "v2.0",
+						    "html_url": "https://github.com/octo/example/releases/tag/v2.0",
+						    "draft": false,
+						    "prerelease": false,
+						    "published_at": "2026-06-01T00:00:00Z",
+						    "assets": [
+						      {
+						        "id": 201,
+						        "name": "example.zip",
+						        "state": "uploaded",
+						        "size": 1024,
+						        "browser_download_url": "https://github.com/octo/example/releases/download/v2.0/example.zip"
+						      },
+						      {
+						        "id": 202,
+						        "name": "unfinished.zip",
+						        "state": "starter",
+						        "size": 10,
+						        "browser_download_url": "https://github.com/octo/example/releases/download/v2.0/unfinished.zip"
+						      },
+						      {
+						        "id": 203,
+						        "name": "http.zip",
+						        "state": "uploaded",
+						        "size": 10,
+						        "browser_download_url": "http://github.com/octo/example/releases/download/v2.0/http.zip"
+						      },
+						      {
+						        "id": 204,
+						        "name": "other-host.zip",
+						        "state": "uploaded",
+						        "size": 10,
+						        "browser_download_url": "https://downloads.example.com/other-host.zip"
+						      },
+						      {
+						        "id": 205,
+						        "name": "user-info.zip",
+						        "state": "uploaded",
+						        "size": 10,
+						        "browser_download_url": "https://user@github.com/octo/example/releases/download/v2.0/user-info.zip"
+						      },
+						      {
+						        "id": 206,
+						        "name": "custom-port.zip",
+						        "state": "uploaded",
+						        "size": 10,
+						        "browser_download_url": "https://github.com:8443/octo/example/releases/download/v2.0/custom-port.zip"
+						      }
+						    ]
+						  }
+						]
+						""", MediaType.APPLICATION_JSON)
+						.header(HttpHeaders.LINK,
+								"<https://api.github.com/repos/octo/example/releases?per_page=100&page=2>; rel=\"next\""));
+		server.expect(requestTo(
+				"https://api.github.com/repos/octo/example/releases?per_page=100&page=2"))
+				.andRespond(withSuccess("""
+						[
+						  {
+						    "id": 21,
+						    "name": null,
+						    "tag_name": "v3.0-beta",
+						    "html_url": "https://github.com/octo/example/releases/tag/v3.0-beta",
+						    "draft": false,
+						    "prerelease": true,
+						    "published_at": "2026-07-01T00:00:00Z",
+						    "assets": []
+						  }
+						]
+						""", MediaType.APPLICATION_JSON));
+
+		var result = adapter.fetchReleases(new RepositoryRef("octo", "example"));
+
+		assertThat(result.items()).hasSize(2);
+		assertThat(result.items().getFirst().reportedAssetCount()).isEqualTo(6);
+		assertThat(result.items().getFirst().excludedAssetCount()).isEqualTo(5);
+		assertThat(result.items().getFirst().assets()).singleElement()
+				.satisfies(asset -> {
+					assertThat(asset.name()).isEqualTo("example.zip");
+					assertThat(asset.sizeBytes()).isEqualTo(1024);
+				});
+		assertThat(result.items().getLast().prerelease()).isTrue();
+		server.verify();
+	}
+
+	@Test
+	void rejectsReleaseHistoryBeyondOneThousandItemsWithoutFollowingTheNextUrl() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		for (int page = 1; page <= 10; page++) {
+			server.expect(requestTo(
+					"https://api.github.com/repos/octo/example/releases?per_page=100&page=" + page))
+					.andRespond(withSuccess("[]", MediaType.APPLICATION_JSON)
+							.header(HttpHeaders.LINK,
+									"<https://api.github.com/repos/octo/example/releases?per_page=100&page="
+											+ (page + 1) + ">; rel=\"next\""));
+		}
+
+		ReleaseHistoryUnsupportedException failure = catchThrowableOfType(
+				ReleaseHistoryUnsupportedException.class,
+				() -> adapter.fetchReleases(new RepositoryRef("octo", "example")));
+
+		assertThat(failure).isNotNull();
+		server.verify();
+	}
+
+	@Test
+	void rejectsAnUntrustedReleasePaginationLinkWithoutFollowingIt() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo(
+				"https://api.github.com/repos/octo/example/releases?per_page=100&page=1"))
+				.andRespond(withSuccess("[]", MediaType.APPLICATION_JSON)
+						.header(HttpHeaders.LINK,
+								"<https://evil.example.com/releases?page=2>; rel=\"next\""));
+
+		GitHubSourceException failure = catchThrowableOfType(
+				GitHubSourceException.class,
+				() -> adapter.fetchReleases(new RepositoryRef("octo", "example")));
+
+		assertThat(failure.code()).isEqualTo(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		server.verify();
+	}
+
+	@Test
+	void doesNotTreatAnExtendedRelationNameAsTheNextPage() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo(
+				"https://api.github.com/repos/octo/example/releases?per_page=100&page=1"))
+				.andRespond(withSuccess("[]", MediaType.APPLICATION_JSON)
+						.header(HttpHeaders.LINK,
+								"<https://api.github.com/repos/octo/example/releases?per_page=100&page=2>; rel=\"next-page\""));
+
+		var result = adapter.fetchReleases(new RepositoryRef("octo", "example"));
+
+		assertThat(result.items()).isEmpty();
+		server.verify();
+	}
+
+	@Test
+	void rejectsAMalformedPublishedReleaseAsAnUpstreamFailure() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		var adapter = adapter(builder, new GitHubRateLimitGate());
+		server.expect(requestTo(
+				"https://api.github.com/repos/octo/example/releases?per_page=100&page=1"))
+				.andRespond(withSuccess("""
+						[{
+						  "id": 1,
+						  "tag_name": "v1.0.0",
+						  "html_url": "https://github.com/octo/example/releases/tag/v1.0.0",
+						  "draft": false,
+						  "prerelease": false,
+						  "published_at": null,
+						  "assets": []
+						}]
+						""", MediaType.APPLICATION_JSON));
+
+		GitHubSourceException failure = catchThrowableOfType(
+				GitHubSourceException.class,
+				() -> adapter.fetchReleases(new RepositoryRef("octo", "example")));
+
+		assertThat(failure.code()).isEqualTo(GuideErrorCode.GITHUB_UPSTREAM_FAILURE);
+		server.verify();
+	}
 
 	@Test
 	void fetchesAndDecodesReadmeWithoutFollowingLinksInItsContent() {

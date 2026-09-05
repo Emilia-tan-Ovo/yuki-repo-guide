@@ -7,6 +7,13 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ProjectGuide;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSectionStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSectionStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseWarning;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRelease;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
@@ -14,11 +21,14 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.github.GitHubRepositoryUrlParser;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryFactsSource;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReadmeSource;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReleaseSource;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryUrlParser;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,7 +58,9 @@ class GuideServiceTest {
 				new FakeRepositoryUrlParser(reference),
 				FakeRepositoryFactsSource.withMetadata(repository),
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -77,7 +89,9 @@ class GuideServiceTest {
 				new FakeRepositoryUrlParser(reference),
 				FakeRepositoryFactsSource.withMetadata(repository),
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -104,7 +118,9 @@ class GuideServiceTest {
 				new FakeRepositoryUrlParser(reference),
 				factsSource,
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -116,6 +132,148 @@ class GuideServiceTest {
 	}
 
 	@Test
+	void keepsExistingGuideRegionsWhenReleaseFetchTimesOut() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var factsSource = FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference))
+				.withLanguages(new RepositoryLanguageBytes(Map.of("Java", 100L)));
+		var releaseSource = FakeRepositoryReleaseSource.withoutReleases()
+				.failingWith(new GitHubSourceException(GuideErrorCode.GITHUB_TIMEOUT));
+		GuideService service = new GuideService(
+				new FakeRepositoryUrlParser(reference),
+				factsSource,
+				FakeRepositoryReadmeSource.withoutReadme(),
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
+
+		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
+
+		assertThat(guide.repository()).isNotNull();
+		assertThat(guide.readme().status()).isEqualTo(ReadmeSectionStatus.NOT_PROVIDED);
+		assertThat(guide.languages().status()).isEqualTo(LanguageSectionStatus.AVAILABLE);
+		assertThat(guide.releases().status()).isEqualTo(ReleaseSectionStatus.FAILED);
+		assertThat(guide.releases().failure().code()).isEqualTo(GuideErrorCode.GITHUB_TIMEOUT);
+		assertThat(guide.releases().failure().retryable()).isTrue();
+		assertThat(releaseSource.requests()).isEqualTo(1);
+	}
+
+	@Test
+	void selectsLatestPublishedReleaseInEachChannelAndHidesDrafts() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var releaseSource = FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(List.of(
+				release(9, "v9-draft", "2026-07-01T00:00:00Z", true, false),
+				release(2, "v1.0", "2026-01-01T00:00:00Z", false, false),
+				release(4, "v2.1-beta", "2026-04-01T00:00:00Z", false, true),
+				release(3, "v2.0", "2026-03-01T00:00:00Z", false, false),
+				release(5, "v3.0-beta", "2026-05-01T00:00:00Z", false, true))));
+		GuideService service = new GuideService(
+				new FakeRepositoryUrlParser(reference),
+				FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference)),
+				FakeRepositoryReadmeSource.withoutReadme(),
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
+
+		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
+
+		assertThat(guide.releases().status()).isEqualTo(ReleaseSectionStatus.AVAILABLE);
+		assertThat(guide.releases().latestStable().tagName()).isEqualTo("v2.0");
+		assertThat(guide.releases().latestPrerelease().tagName()).isEqualTo("v3.0-beta");
+		assertThat(guide.releases().latestPrerelease().warnings())
+				.containsExactly(ReleaseWarning.PRERELEASE);
+	}
+
+	@Test
+	void treatsDraftOnlyReleaseHistoryAsNotProvided() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var releaseSource = FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(List.of(
+				release(9, "v9-draft", "2026-07-01T00:00:00Z", true, false))));
+		GuideService service = new GuideService(
+				new FakeRepositoryUrlParser(reference),
+				FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference)),
+				FakeRepositoryReadmeSource.withoutReadme(),
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
+
+		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
+
+		assertThat(guide.releases().status()).isEqualTo(ReleaseSectionStatus.NOT_PROVIDED);
+		assertThat(guide.releases().evidence()).isEmpty();
+	}
+
+	@Test
+	void retriesOnlyReleasesUsingTheCanonicalRepositoryUrl() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var factsSource = FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference));
+		var readmeSource = FakeRepositoryReadmeSource.withoutReadme();
+		var releaseSource = FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(List.of(
+				release(3, "v2.0", "2026-03-01T00:00:00Z", false, false))));
+		GuideService service = new GuideService(
+				new GitHubRepositoryUrlParser(),
+				factsSource,
+				readmeSource,
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
+
+		var releases = service.retryReleases("https://github.com/octo/example");
+
+		assertThat(releases.status()).isEqualTo(ReleaseSectionStatus.AVAILABLE);
+		assertThat(releases.latestStable().tagName()).isEqualTo("v2.0");
+		assertThat(releaseSource.receivedRef()).isEqualTo(reference);
+		assertThat(factsSource.metadataRequests()).isZero();
+		assertThat(factsSource.languageRequests()).isZero();
+		assertThat(readmeSource.requests()).isZero();
+	}
+
+	@Test
+	void limitsDisplayedAssetsAndCreatesTraceableEvidence() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		List<RepositoryReleaseAsset> assets = IntStream.rangeClosed(1, 51)
+				.mapToObj(index -> new RepositoryReleaseAsset(
+						1_000 + index,
+						"asset-%02d.zip".formatted(52 - index),
+						index * 100L,
+						"https://github.com/octo/example/releases/download/v2.0/asset-%02d.zip"
+								.formatted(52 - index)))
+				.toList();
+		RepositoryRelease release = new RepositoryRelease(
+				20,
+				"Version 2",
+				"v2.0",
+				"https://github.com/octo/example/releases/tag/v2.0",
+				Instant.parse("2026-06-01T00:00:00Z"),
+				false,
+				false,
+				52,
+				1,
+				assets);
+		GuideService service = new GuideService(
+				new FakeRepositoryUrlParser(reference),
+				FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference)),
+				FakeRepositoryReadmeSource.withoutReadme(),
+				FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(List.of(release))),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
+
+		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
+
+		var stable = guide.releases().latestStable();
+		assertThat(stable.assets()).hasSize(50);
+		assertThat(stable.assets()).extracting(asset -> asset.name())
+				.startsWith("asset-01.zip")
+				.endsWith("asset-50.zip");
+		assertThat(stable.assetsTruncated()).isTrue();
+		assertThat(stable.reportedAssetCount()).isEqualTo(52);
+		assertThat(stable.excludedAssetCount()).isEqualTo(1);
+		assertThat(stable.warnings()).containsExactly(ReleaseWarning.SOME_ASSETS_OMITTED);
+		assertThat(guide.evidence().get(stable.evidenceId())).isInstanceOf(ReleaseEvidence.class);
+		assertThat(guide.evidence().get(stable.assets().getFirst().evidenceId()))
+				.isInstanceOf(ReleaseAssetEvidence.class);
+	}
+
+	@Test
 	void representsUnsupportedReadmeContentAsANonRetryableInitialFailure() {
 		RepositoryRef reference = new RepositoryRef("octo", "example");
 		var readmeSource = FakeRepositoryReadmeSource.withoutReadme()
@@ -124,7 +282,9 @@ class GuideServiceTest {
 				new FakeRepositoryUrlParser(reference),
 				FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference)),
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -143,7 +303,9 @@ class GuideServiceTest {
 				new GitHubRepositoryUrlParser(),
 				factsSource,
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 
 		var readme = service.retryReadme("https://github.com/octo/example");
 
@@ -304,6 +466,25 @@ class GuideServiceTest {
 				Instant.parse("2026-08-24T12:00:00Z"));
 	}
 
+	private RepositoryRelease release(
+			long id,
+			String tagName,
+			String publishedAt,
+			boolean draft,
+			boolean prerelease) {
+		return new RepositoryRelease(
+				id,
+				null,
+				tagName,
+				"https://github.com/octo/example/releases/tag/" + tagName,
+				Instant.parse(publishedAt),
+				draft,
+				prerelease,
+				0,
+				0,
+				List.of());
+	}
+
 	private GuideService guideService(
 			RepositoryUrlParser parser,
 			RepositoryFactsSource factsSource) {
@@ -311,6 +492,8 @@ class GuideServiceTest {
 				parser,
 				factsSource,
 				FakeRepositoryReadmeSource.withoutReadme(),
-				new OnlineExperienceRecognizer());
+				FakeRepositoryReleaseSource.withoutReleases(),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 	}
 }

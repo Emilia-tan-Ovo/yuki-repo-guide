@@ -35,4 +35,11 @@ public final class GuideController {
 		return ReadmeRetryResponse.from(
 				guideService.retryReadme(request.canonicalUrl()));
 	}
+
+	@PostMapping("/releases/retry")
+	public ReleaseRetryResponse retryReleases(
+			@Valid @RequestBody RetryReleasesRequest request) {
+		return ReleaseRetryResponse.from(
+				guideService.retryReleases(request.canonicalUrl()));
+	}
 }

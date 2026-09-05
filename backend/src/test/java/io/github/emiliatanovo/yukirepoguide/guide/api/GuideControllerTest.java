@@ -4,14 +4,20 @@ import io.github.emiliatanovo.yukirepoguide.guide.application.GuideService;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.OnlineExperienceRecognizer;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseInterpreter;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRelease;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases;
 import io.github.emiliatanovo.yukirepoguide.guide.github.GitHubRepositoryUrlParser;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryFactsSource;
 import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReadmeSource;
+import io.github.emiliatanovo.yukirepoguide.guide.support.FakeRepositoryReleaseSource;
 import io.github.emiliatanovo.yukirepoguide.web.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +30,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -189,9 +196,91 @@ class GuideControllerTest {
 		assertThat(factsSource.languageRequests()).isEqualTo(1);
 	}
 
+	@Test
+	void returnsLatestReleasesAssetsAndTheirEvidence() throws Exception {
+		releaseSource.returning(new RepositoryReleases(List.of(new RepositoryRelease(
+				41L,
+				"Yuki 2.0",
+				"v2.0.0",
+				"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/releases/tag/v2.0.0",
+				Instant.parse("2026-08-31T12:00:00Z"),
+				false,
+				false,
+				1,
+				0,
+				List.of(new RepositoryReleaseAsset(
+						51L,
+						"yuki.zip",
+						2048L,
+						"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/releases/download/v2.0.0/yuki.zip"))))));
+
+		mockMvc.perform(post("/api/guides")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"repositoryUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.releases.status").value("AVAILABLE"))
+				.andExpect(jsonPath("$.releases.latestStable.name").value("Yuki 2.0"))
+				.andExpect(jsonPath("$.releases.latestStable.assets[0].name").value("yuki.zip"))
+				.andExpect(jsonPath("$.releases.latestStable.assets[0].sizeBytes").value(2048))
+				.andExpect(jsonPath("$.evidence.github-release-41.type").value("RELEASE"))
+				.andExpect(jsonPath("$.evidence.github-release-asset-51.type")
+						.value("RELEASE_ASSET"))
+				.andExpect(jsonPath("$.evidence.github-release-asset-51.releaseEvidenceId")
+						.value("github-release-41"));
+	}
+
+	@Test
+	void mapsUnsupportedReleaseHistoryOnExplicitRetryToUnprocessableContent() throws Exception {
+		releaseSource.failingWith(new ReleaseHistoryUnsupportedException());
+
+		mockMvc.perform(post("/api/guides/releases/retry")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isUnprocessableContent())
+				.andExpect(jsonPath("$.code").value("RELEASE_HISTORY_UNSUPPORTED"))
+				.andExpect(jsonPath("$.retryable").value(false));
+	}
+
+	@Test
+	void keepsAnInitialReleaseFailureInsideTheSuccessfulGuideResponse() throws Exception {
+		releaseSource.failingWith(new GitHubSourceException(GuideErrorCode.GITHUB_TIMEOUT));
+
+		mockMvc.perform(post("/api/guides")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"repositoryUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.repository.name").value("yuki-repo-guide"))
+				.andExpect(jsonPath("$.releases.status").value("FAILED"))
+				.andExpect(jsonPath("$.releases.failure.code").value("GITHUB_TIMEOUT"))
+				.andExpect(jsonPath("$.releases.failure.retryable").value(true));
+	}
+
+	@Test
+	void preservesRetryAfterWhenExplicitReleaseRetryIsRateLimited() throws Exception {
+		releaseSource.failingWith(new GitHubSourceException(
+				GuideErrorCode.GITHUB_RATE_LIMITED, 75L));
+
+		mockMvc.perform(post("/api/guides/releases/retry")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide"}
+						"""))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(header().string("Retry-After", "75"))
+				.andExpect(jsonPath("$.code").value("GITHUB_RATE_LIMITED"))
+				.andExpect(jsonPath("$.retryAfterSeconds").value(75));
+	}
+
 	private MockMvc mockMvc;
 	private FakeRepositoryFactsSource factsSource;
 	private FakeRepositoryReadmeSource readmeSource;
+	private FakeRepositoryReleaseSource releaseSource;
 
 	@BeforeEach
 	void setUp() {
@@ -205,11 +294,14 @@ class GuideControllerTest {
 				"https://project.example.com");
 		factsSource = FakeRepositoryFactsSource.withMetadata(repository);
 		readmeSource = FakeRepositoryReadmeSource.withoutReadme();
+		releaseSource = FakeRepositoryReleaseSource.withoutReleases();
 		var guideService = new GuideService(
 				new GitHubRepositoryUrlParser(),
 				factsSource,
 				readmeSource,
-				new OnlineExperienceRecognizer());
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter());
 		mockMvc = MockMvcBuilders.standaloneSetup(new GuideController(guideService))
 				.setControllerAdvice(new GlobalExceptionHandler())
 				.build();
@@ -255,7 +347,10 @@ class GuideControllerTest {
 				.andExpect(jsonPath("$.repository.owner").value("Emilia-tan-Ovo"))
 				.andExpect(jsonPath("$.repository.name").value("yuki-repo-guide"))
 				.andExpect(jsonPath("$.repository.canonicalUrl")
-						.value("https://github.com/Emilia-tan-Ovo/yuki-repo-guide"));
+						.value("https://github.com/Emilia-tan-Ovo/yuki-repo-guide"))
+				.andExpect(jsonPath("$.releases.status").value("NOT_PROVIDED"))
+				.andExpect(jsonPath("$.releases.latestStable").doesNotExist())
+				.andExpect(jsonPath("$.releases.latestPrerelease").doesNotExist());
 	}
 
 	@Test

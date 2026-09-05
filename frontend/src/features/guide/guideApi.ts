@@ -3,6 +3,7 @@ import type {
   GuideResponse,
   LanguageRetryResponse,
   ReadmeRetryResponse,
+  ReleaseRetryResponse,
   ProblemDetail,
 } from './guideTypes.ts'
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
@@ -43,6 +44,10 @@ export async function retryLanguages(canonicalUrl: string): Promise<LanguageRetr
 
 export async function retryReadme(canonicalUrl: string): Promise<ReadmeRetryResponse> {
   return requestGuide<ReadmeRetryResponse>(() => sendReadmeRetryRequest(canonicalUrl))
+}
+
+export async function retryReleases(canonicalUrl: string): Promise<ReleaseRetryResponse> {
+  return requestGuide<ReleaseRetryResponse>(() => sendReleaseRetryRequest(canonicalUrl))
 }
 
 async function requestGuide<T>(sendRequest: () => Promise<Response>): Promise<T> {
@@ -96,6 +101,14 @@ function sendReadmeRetryRequest(canonicalUrl: string): Promise<Response> {
   })
 }
 
+function sendReleaseRetryRequest(canonicalUrl: string): Promise<Response> {
+  return fetchWithCsrfRetry('/api/guides/releases/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canonicalUrl }),
+  })
+}
+
 export function messageForCode(code?: GuideErrorCode, fallback?: string): string {
   switch (code) {
     case 'REPOSITORY_NOT_ACCESSIBLE':
@@ -110,6 +123,8 @@ export function messageForCode(code?: GuideErrorCode, fallback?: string): string
       return '连接 GitHub 超时，请检查网络状况或稍后重试。'
     case 'README_CONTENT_UNSUPPORTED':
       return '当前 README 内容格式暂不受支持，无法识别在线体验入口。'
+    case 'RELEASE_HISTORY_UNSUPPORTED':
+      return '该仓库的 Release 历史超过 1000 条，暂不支持完整导览。'
     default:
       return fallback ?? '导览请求失败了，请稍后重试。'
   }
@@ -125,6 +140,13 @@ export function messageForReadmeCode(code?: string, fallback?: string): string {
 export function messageForLanguageCode(code?: string, fallback?: string): string {
   if (code === 'REPOSITORY_NOT_ACCESSIBLE') {
     return 'GitHub 暂时无法读取这个仓库的语言统计，请稍后重试。'
+  }
+  return messageForCode(code as GuideErrorCode | undefined, fallback)
+}
+
+export function messageForReleaseCode(code?: string, fallback?: string): string {
+  if (code === 'REPOSITORY_NOT_ACCESSIBLE') {
+    return 'GitHub 暂时无法读取这个仓库的 Release，请稍后重试。'
   }
   return messageForCode(code as GuideErrorCode | undefined, fallback)
 }
