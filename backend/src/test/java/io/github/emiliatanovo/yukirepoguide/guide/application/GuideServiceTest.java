@@ -5,8 +5,10 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRepositoryUrlException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.LanguageSectionStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ProcessorArchitecture;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ProjectGuide;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReadmeSectionStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseRecommendationStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseWarning;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetEvidence;
@@ -14,6 +16,8 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRelease;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleaseAsset;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeOperatingSystem;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
@@ -60,7 +64,7 @@ class GuideServiceTest {
 				readmeSource,
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -91,7 +95,7 @@ class GuideServiceTest {
 				readmeSource,
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -120,7 +124,7 @@ class GuideServiceTest {
 				readmeSource,
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -144,7 +148,7 @@ class GuideServiceTest {
 				FakeRepositoryReadmeSource.withoutReadme(),
 				releaseSource,
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -172,7 +176,7 @@ class GuideServiceTest {
 				FakeRepositoryReadmeSource.withoutReadme(),
 				releaseSource,
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -194,7 +198,7 @@ class GuideServiceTest {
 				FakeRepositoryReadmeSource.withoutReadme(),
 				releaseSource,
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -215,7 +219,7 @@ class GuideServiceTest {
 				readmeSource,
 				releaseSource,
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		var releases = service.retryReleases("https://github.com/octo/example");
 
@@ -225,6 +229,114 @@ class GuideServiceTest {
 		assertThat(factsSource.metadataRequests()).isZero();
 		assertThat(factsSource.languageRequests()).isZero();
 		assertThat(readmeSource.requests()).isZero();
+	}
+
+	@Test
+	void recommendsFromTheFullLatestReleaseWithoutRefetchingOtherGuideRegions() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var factsSource = FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference));
+		var readmeSource = FakeRepositoryReadmeSource.withoutReadme();
+		List<RepositoryReleaseAsset> assets = IntStream.rangeClosed(1, 50)
+				.mapToObj(index -> new RepositoryReleaseAsset(
+						1_000 + index,
+						"asset-%02d.zip".formatted(index),
+						1024L,
+						"https://github.com/octo/example/releases/download/v2.0/asset-%02d.zip"
+								.formatted(index)))
+				.collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+		assets.add(new RepositoryReleaseAsset(
+				2_000L,
+				"zz-yuki-windows-x64-setup.exe",
+				4096L,
+				"https://github.com/octo/example/releases/download/v2.0/"
+						+ "zz-yuki-windows-x64-setup.exe"));
+		var releaseSource = FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(
+				List.of(new RepositoryRelease(
+						20L,
+						"Version 2",
+						"v2.0",
+						"https://github.com/octo/example/releases/tag/v2.0",
+						Instant.parse("2026-06-01T00:00:00Z"),
+						false,
+						false,
+						51,
+						0,
+						assets))));
+		GuideService service = new GuideService(
+				new GitHubRepositoryUrlParser(),
+				factsSource,
+				readmeSource,
+				releaseSource,
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
+
+		var releases = service.recommendReleases(
+				"https://github.com/octo/example",
+				new RuntimeEnvironment(
+						RuntimeOperatingSystem.WINDOWS,
+						ProcessorArchitecture.X64,
+						null));
+
+		assertThat(releases.recommendation().status())
+				.isEqualTo(ReleaseRecommendationStatus.READY);
+		assertThat(releases.latestStable().matchingAssets()).singleElement()
+				.satisfies(asset -> {
+					assertThat(asset.name()).isEqualTo("zz-yuki-windows-x64-setup.exe");
+					assertThat(asset.assessment().directlyRecommended()).isTrue();
+				});
+		assertThat(releases.latestStable().assets()).hasSize(50)
+				.extracting(asset -> asset.name())
+				.doesNotContain("zz-yuki-windows-x64-setup.exe");
+		assertThat(releases.evidence()).containsKey("github-release-asset-2000");
+		assertThat(releaseSource.receivedRef()).isEqualTo(reference);
+		assertThat(releaseSource.requests()).isEqualTo(1);
+		assertThat(factsSource.metadataRequests()).isZero();
+		assertThat(factsSource.languageRequests()).isZero();
+		assertThat(readmeSource.requests()).isZero();
+	}
+
+	@Test
+	void doesNotFallBackToAnOlderStableReleaseForACompatibleAsset() {
+		RepositoryRef reference = new RepositoryRef("octo", "example");
+		var oldCompatible = releaseWithAssets(
+				10L,
+				"v1.0",
+				"2026-01-01T00:00:00Z",
+				List.of(new RepositoryReleaseAsset(
+						101L,
+						"yuki-windows-x64.exe",
+						1024L,
+						"https://github.com/octo/example/releases/download/v1.0/"
+								+ "yuki-windows-x64.exe")));
+		var latestIncompatible = releaseWithAssets(
+				20L,
+				"v2.0",
+				"2026-02-01T00:00:00Z",
+				List.of(new RepositoryReleaseAsset(
+						201L,
+						"yuki-linux-x64.AppImage",
+						1024L,
+						"https://github.com/octo/example/releases/download/v2.0/"
+								+ "yuki-linux-x64.AppImage")));
+		GuideService service = new GuideService(
+				new FakeRepositoryUrlParser(reference),
+				FakeRepositoryFactsSource.withMetadata(repositoryFacts(reference)),
+				FakeRepositoryReadmeSource.withoutReadme(),
+				FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(
+						List.of(oldCompatible, latestIncompatible))),
+				new OnlineExperienceRecognizer(),
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
+
+		var releases = service.recommendReleases(
+				"https://github.com/octo/example",
+				new RuntimeEnvironment(
+						RuntimeOperatingSystem.WINDOWS,
+						ProcessorArchitecture.X64,
+						null));
+
+		assertThat(releases.latestStable().tagName()).isEqualTo("v2.0");
+		assertThat(releases.latestStable().matchingAssets()).isEmpty();
+		assertThat(releases.evidence()).doesNotContainKey("github-release-asset-101");
 	}
 
 	@Test
@@ -255,7 +367,7 @@ class GuideServiceTest {
 				FakeRepositoryReadmeSource.withoutReadme(),
 				FakeRepositoryReleaseSource.withReleases(new RepositoryReleases(List.of(release))),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -284,7 +396,7 @@ class GuideServiceTest {
 				readmeSource,
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		ProjectGuide guide = service.createGuide("https://github.com/octo/example");
 
@@ -305,7 +417,7 @@ class GuideServiceTest {
 				readmeSource,
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 
 		var readme = service.retryReadme("https://github.com/octo/example");
 
@@ -485,6 +597,24 @@ class GuideServiceTest {
 				List.of());
 	}
 
+	private RepositoryRelease releaseWithAssets(
+			long id,
+			String tagName,
+			String publishedAt,
+			List<RepositoryReleaseAsset> assets) {
+		return new RepositoryRelease(
+				id,
+				null,
+				tagName,
+				"https://github.com/octo/example/releases/tag/" + tagName,
+				Instant.parse(publishedAt),
+				false,
+				false,
+				assets.size(),
+				0,
+				assets);
+	}
+
 	private GuideService guideService(
 			RepositoryUrlParser parser,
 			RepositoryFactsSource factsSource) {
@@ -494,6 +624,6 @@ class GuideServiceTest {
 				FakeRepositoryReadmeSource.withoutReadme(),
 				FakeRepositoryReleaseSource.withoutReleases(),
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 	}
 }

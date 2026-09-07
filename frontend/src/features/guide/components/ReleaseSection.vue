@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import type { Evidence, ReleaseSection, ReleaseSummary } from '../guideTypes'
+import type {
+  ConfirmedRuntime,
+  Evidence,
+  ReleaseAssetMatchStatus,
+  ReleaseAssetRole,
+  ReleaseSection,
+  ReleaseSummary,
+} from '../guideTypes'
+import ReleaseRecommendationPanel from './ReleaseRecommendationPanel.vue'
 
 defineProps<{
   releases: ReleaseSection
@@ -8,10 +16,15 @@ defineProps<{
   retryDisabled: boolean
   retryMessage: string
   errorMessage: string
+  recommendationBusy: boolean
+  recommendationDisabled: boolean
+  recommendationRetryMessage: string
+  recommendationErrorMessage: string
 }>()
 
 defineEmits<{
   retry: []
+  recommend: [runtime: ConfirmedRuntime]
 }>()
 
 function releaseTitle(release: ReleaseSummary): string {
@@ -31,6 +44,26 @@ function formatBytes(bytes: number): string {
   if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`
   return `${(bytes / 1_073_741_824).toFixed(1)} GB`
 }
+
+function roleLabel(role: ReleaseAssetRole): string {
+  return {
+    STANDARD_INSTALLER: '标准安装资源',
+    PORTABLE: '便携资源',
+    MANUAL_ARCHIVE: '手动压缩资源',
+    AUXILIARY: '辅助资源',
+    SOURCE: '源码资源',
+    UNKNOWN: '用途无法确认',
+  }[role]
+}
+
+function matchLabel(status: ReleaseAssetMatchStatus): string {
+  return {
+    MATCHED: '明确匹配',
+    POSSIBLY_APPLICABLE: '可能适用',
+    NOT_MATCHED: '不匹配',
+    UNABLE_TO_CONFIRM: '无法确认',
+  }[status]
+}
 </script>
 
 <template>
@@ -44,6 +77,16 @@ function formatBytes(bytes: number): string {
     </div>
 
     <div v-if="releases.status === 'AVAILABLE'" class="release-list">
+      <ReleaseRecommendationPanel
+        :releases="releases"
+        :evidence="evidence"
+        :busy="recommendationBusy"
+        :disabled="recommendationDisabled"
+        :retry-message="recommendationRetryMessage"
+        :error-message="recommendationErrorMessage"
+        @confirm="$emit('recommend', $event)"
+      />
+
       <article
         v-for="entry in [
           { label: '最新正式版', release: releases.latestStable },
@@ -73,6 +116,7 @@ function formatBytes(bytes: number): string {
             此版本共有 {{ entry.release.reportedAssetCount }} 个资源，仅按名称展示前 50 个。
           </p>
 
+          <p class="original-list-label">原始资源列表（按文件名排序）</p>
           <ul v-if="entry.release.assets.length" class="asset-list">
             <li v-for="asset in entry.release.assets" :key="asset.evidenceId">
               <div>
@@ -81,6 +125,12 @@ function formatBytes(bytes: number): string {
                 </a>
                 <span>{{ formatBytes(asset.sizeBytes) }}</span>
               </div>
+              <p class="asset-analysis">
+                {{ roleLabel(asset.role) }}
+                <template v-if="asset.assessment">
+                  · {{ matchLabel(asset.assessment.matchStatus) }}
+                </template>
+              </p>
               <details v-if="evidence[asset.evidenceId]" class="asset-evidence">
                 <summary>资源证据</summary>
                 <p>
@@ -171,6 +221,7 @@ function formatBytes(bytes: number): string {
 h3,
 h4,
 .published-at,
+.original-list-label,
 .warning,
 .empty-assets,
 .release-state,
@@ -202,11 +253,14 @@ h4 { color: var(--color-heading); font-size: 1rem; }
 }
 
 .published-at,
+.original-list-label,
 .empty-assets,
 .safety-note {
   color: var(--color-text-muted);
   font-size: 0.78rem;
 }
+
+.original-list-label { font-weight: 750; }
 
 .warning {
   padding: 0.55rem 0.7rem;
@@ -240,6 +294,7 @@ h4 { color: var(--color-heading); font-size: 1rem; }
 }
 
 .asset-list span { color: var(--color-text-muted); }
+.asset-analysis { margin: 0.25rem 0 0; color: var(--color-text-muted); font-size: 0.73rem; }
 
 .release-evidence,
 .asset-evidence {

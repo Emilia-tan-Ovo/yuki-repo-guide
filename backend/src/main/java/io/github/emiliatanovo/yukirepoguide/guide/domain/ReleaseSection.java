@@ -7,6 +7,7 @@ public record ReleaseSection(
 		ReleaseSummary latestStable,
 		ReleaseSummary latestPrerelease,
 		ReleaseFailure failure,
+		ReleaseRecommendation recommendation,
 		Map<String, GuideEvidence> evidence) {
 
 	public ReleaseSection {
@@ -15,18 +16,25 @@ public record ReleaseSection(
 
 	public static ReleaseSection notProvided() {
 		return new ReleaseSection(
-				ReleaseSectionStatus.NOT_PROVIDED, null, null, null, Map.of());
+				ReleaseSectionStatus.NOT_PROVIDED,
+				null,
+				null,
+				null,
+				ReleaseRecommendation.notRequested(),
+				Map.of());
 	}
 
 	public static ReleaseSection available(
 			ReleaseSummary latestStable,
 			ReleaseSummary latestPrerelease,
+			ReleaseRecommendation recommendation,
 			Map<String, GuideEvidence> evidence) {
 		return new ReleaseSection(
 				ReleaseSectionStatus.AVAILABLE,
 				latestStable,
 				latestPrerelease,
 				null,
+				recommendation,
 				evidence);
 	}
 
@@ -39,6 +47,7 @@ public record ReleaseSection(
 				null,
 				null,
 				new ReleaseFailure(code, retryable, retryAfterSeconds),
+				ReleaseRecommendation.notRequested(),
 				Map.of());
 	}
 }

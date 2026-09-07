@@ -3,15 +3,18 @@ package io.github.emiliatanovo.yukirepoguide.guide.application;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetAssessment;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseChannel;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseEvidence;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseRecommendation;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSummary;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseWarning;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRelease;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleaseAsset;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,9 +28,27 @@ import org.springframework.stereotype.Component;
 @Component
 public final class ReleaseInterpreter {
 	private static final int MAX_VISIBLE_ASSETS = 50;
+	private static final int MAX_VISIBLE_MATCHES = 50;
 	private static final String SOURCE = "GitHub Releases REST API";
+	private final ReleaseAssetAdvisor assetAdvisor;
+
+	public ReleaseInterpreter(ReleaseAssetAdvisor assetAdvisor) {
+		this.assetAdvisor = assetAdvisor;
+	}
 
 	public ReleaseSection interpret(RepositoryReleases releases) {
+		return interpret(releases, null);
+	}
+
+	public ReleaseSection recommend(
+			RepositoryReleases releases,
+			RuntimeEnvironment runtime) {
+		return interpret(releases, runtime);
+	}
+
+	private ReleaseSection interpret(
+			RepositoryReleases releases,
+			RuntimeEnvironment runtime) {
 		List<RepositoryRelease> published = releases.items().stream()
 				.filter(release -> !release.draft())
 				.toList();
@@ -47,12 +68,35 @@ public final class ReleaseInterpreter {
 				.filter(RepositoryRelease::prerelease)
 				.max(newestPublished)
 				.orElse(null);
+		ReleaseAssetAdvisor.Advice advice = assetAdvisor.advise(
+				assetsOf(latestStable), assetsOf(latestPrerelease), runtime);
 
 		Map<String, GuideEvidence> evidence = new LinkedHashMap<>();
-		return ReleaseSection.available(
-				summary(latestStable, ReleaseChannel.STABLE, evidence),
-				summary(latestPrerelease, ReleaseChannel.PRERELEASE, evidence),
+		SummaryResult stable = summary(
+				latestStable,
+				ReleaseChannel.STABLE,
+				advice.orderedStableAssetIds(),
+				advice,
+				MAX_VISIBLE_MATCHES,
 				evidence);
+		int remainingMatches = MAX_VISIBLE_MATCHES - stable.visibleMatchingAssetCount();
+		SummaryResult prerelease = summary(
+				latestPrerelease,
+				ReleaseChannel.PRERELEASE,
+				advice.orderedPrereleaseAssetIds(),
+				advice,
+				remainingMatches,
+				evidence);
+		return ReleaseSection.available(
+				stable.summary(),
+				prerelease.summary(),
+				new ReleaseRecommendation(
+						advice.status(), advice.runtime(), advice.availableLinuxFamilies()),
+				evidence);
+	}
+
+	private List<RepositoryReleaseAsset> assetsOf(RepositoryRelease release) {
+		return release == null ? List.of() : release.assets();
 	}
 
 	private void validatePublishedRelease(RepositoryRelease release) {
@@ -65,12 +109,15 @@ public final class ReleaseInterpreter {
 		}
 	}
 
-	private ReleaseSummary summary(
+	private SummaryResult summary(
 			RepositoryRelease release,
 			ReleaseChannel channel,
+			List<Long> orderedMatchingAssetIds,
+			ReleaseAssetAdvisor.Advice advice,
+			int matchingLimit,
 			Map<String, GuideEvidence> evidence) {
 		if (release == null) {
-			return null;
+			return new SummaryResult(null, 0);
 		}
 		String name = release.name() == null || release.name().isBlank()
 				? release.tagName()
@@ -95,7 +142,17 @@ public final class ReleaseInterpreter {
 				.toList();
 		List<ReleaseAsset> visibleAssets = sortedAssets.stream()
 				.limit(MAX_VISIBLE_ASSETS)
-				.map(asset -> visibleAsset(asset, releaseEvidenceId, evidence))
+				.map(asset -> visibleAsset(
+						asset, releaseEvidenceId, advice.decisions().get(asset.id()), evidence))
+				.toList();
+		Map<Long, RepositoryReleaseAsset> assetsById = new LinkedHashMap<>();
+		release.assets().forEach(asset -> assetsById.put(asset.id(), asset));
+		List<ReleaseAsset> matchingAssets = orderedMatchingAssetIds.stream()
+				.limit(matchingLimit)
+				.map(assetsById::get)
+				.filter(java.util.Objects::nonNull)
+				.map(asset -> visibleAsset(
+						asset, releaseEvidenceId, advice.decisions().get(asset.id()), evidence))
 				.toList();
 		List<ReleaseWarning> warnings = new ArrayList<>();
 		if (channel == ReleaseChannel.PRERELEASE) {
@@ -104,21 +161,25 @@ public final class ReleaseInterpreter {
 		if (release.excludedAssetCount() > 0 || sortedAssets.size() > MAX_VISIBLE_ASSETS) {
 			warnings.add(ReleaseWarning.SOME_ASSETS_OMITTED);
 		}
-		return new ReleaseSummary(
+		return new SummaryResult(new ReleaseSummary(
 				name,
 				release.tagName(),
 				release.publishedAt(),
 				visibleAssets,
+				matchingAssets,
+				orderedMatchingAssetIds.size(),
+				orderedMatchingAssetIds.size() > matchingAssets.size(),
 				release.reportedAssetCount(),
 				release.excludedAssetCount(),
 				sortedAssets.size() > MAX_VISIBLE_ASSETS,
 				warnings,
-				releaseEvidenceId);
+				releaseEvidenceId), matchingAssets.size());
 	}
 
 	private ReleaseAsset visibleAsset(
 			RepositoryReleaseAsset asset,
 			String releaseEvidenceId,
+			ReleaseAssetAdvisor.AssetDecision decision,
 			Map<String, GuideEvidence> evidence) {
 		String evidenceId = "github-release-asset-" + asset.id();
 		evidence.put(evidenceId, new ReleaseAssetEvidence(
@@ -129,7 +190,23 @@ public final class ReleaseInterpreter {
 				asset.name(),
 				asset.sizeBytes(),
 				asset.downloadUrl()));
+		ReleaseAssetAssessment assessment = decision.matchStatus() == null
+				? null
+				: new ReleaseAssetAssessment(
+						decision.matchStatus(),
+						decision.directlyRecommended(),
+						decision.detectedOperatingSystem(),
+						decision.detectedArchitecture(),
+						decision.detectedLinuxPackageFamily());
 		return new ReleaseAsset(
-				asset.name(), asset.sizeBytes(), asset.downloadUrl(), evidenceId);
+				asset.name(),
+				asset.sizeBytes(),
+				asset.downloadUrl(),
+				evidenceId,
+				decision.role(),
+				assessment);
+	}
+
+	private record SummaryResult(ReleaseSummary summary, int visibleMatchingAssetCount) {
 	}
 }

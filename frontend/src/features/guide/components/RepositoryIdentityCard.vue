@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type {
+  ConfirmedRuntime,
   Evidence,
   LanguageSection,
   ReadmeSection,
@@ -28,12 +29,17 @@ const props = defineProps<{
   releaseRetryDisabled: boolean
   releaseRetryMessage: string
   releaseErrorMessage: string
+  releaseRecommendationBusy: boolean
+  releaseRecommendationDisabled: boolean
+  releaseRecommendationRetryMessage: string
+  releaseRecommendationErrorMessage: string
 }>()
 
 defineEmits<{
   retryLanguages: []
   retryReadme: []
   retryReleases: []
+  recommendReleases: [runtime: ConfirmedRuntime]
 }>()
 
 const repositoryEvidence = computed(() => props.evidence[props.repository.evidenceId])
@@ -196,7 +202,12 @@ function barWidth(value: number): string {
       :retry-disabled="releaseRetryDisabled"
       :retry-message="releaseRetryMessage"
       :error-message="releaseErrorMessage"
+      :recommendation-busy="releaseRecommendationBusy"
+      :recommendation-disabled="releaseRecommendationDisabled"
+      :recommendation-retry-message="releaseRecommendationRetryMessage"
+      :recommendation-error-message="releaseRecommendationErrorMessage"
       @retry="$emit('retryReleases')"
+      @recommend="$emit('recommendReleases', $event)"
     />
   </article>
 </template>

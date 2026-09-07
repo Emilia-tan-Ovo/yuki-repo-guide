@@ -4,6 +4,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.application.GuideService;
 import io.github.emiliatanovo.yukirepoguide.guide.application.GitHubSourceException;
 import io.github.emiliatanovo.yukirepoguide.guide.application.OnlineExperienceRecognizer;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsupportedException;
+import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseAssetAdvisor;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseInterpreter;
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
@@ -277,6 +278,138 @@ class GuideControllerTest {
 				.andExpect(jsonPath("$.retryAfterSeconds").value(75));
 	}
 
+	@Test
+	void recommendsReleaseAssetsForAConfirmedRuntime() throws Exception {
+		releaseSource.returning(new RepositoryReleases(List.of(new RepositoryRelease(
+				41L,
+				"Yuki 2.0",
+				"v2.0.0",
+				"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/releases/tag/v2.0.0",
+				Instant.parse("2026-08-31T12:00:00Z"),
+				false,
+				false,
+				1,
+				0,
+				List.of(new RepositoryReleaseAsset(
+						51L,
+						"yuki-windows-x64-setup.exe",
+						2048L,
+						"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/releases/"
+								+ "download/v2.0.0/yuki-windows-x64-setup.exe"))))));
+
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide",
+						  "runtime": {
+						    "operatingSystem":"WINDOWS",
+						    "architecture":"X64"
+						  }
+						}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.repository").doesNotExist())
+				.andExpect(jsonPath("$.languages").doesNotExist())
+				.andExpect(jsonPath("$.releases.recommendation.status").value("READY"))
+				.andExpect(jsonPath("$.releases.recommendation.runtime.operatingSystem")
+						.value("WINDOWS"))
+				.andExpect(jsonPath("$.releases.latestStable.matchingAssets[0].role")
+						.value("STANDARD_INSTALLER"))
+				.andExpect(jsonPath(
+						"$.releases.latestStable.matchingAssets[0].assessment.matchStatus")
+						.value("MATCHED"))
+				.andExpect(jsonPath(
+						"$.releases.latestStable.matchingAssets[0].assessment.directlyRecommended")
+						.value(true))
+				.andExpect(jsonPath("$.evidence.github-release-asset-51.type")
+						.value("RELEASE_ASSET"));
+		assertThat(releaseSource.requests()).isEqualTo(1);
+		assertThat(factsSource.metadataRequests()).isZero();
+		assertThat(readmeSource.requests()).isZero();
+	}
+
+	@ParameterizedTest
+	@MethodSource("invalidRuntimeRequests")
+	void rejectsInvalidRuntimeWithoutRequestingGitHub(String request, String field) throws Exception {
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(request))
+				.andExpect(status().isBadRequest())
+				.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+				.andExpect(jsonPath("$.title").value("运行环境无效"))
+				.andExpect(jsonPath("$.code").value("INVALID_RUNTIME_ENVIRONMENT"))
+				.andExpect(jsonPath("$.field").value(field));
+		assertThat(releaseSource.requests()).isZero();
+	}
+
+	@Test
+	void preservesRetryAfterWhenReleaseRecommendationIsRateLimited() throws Exception {
+		releaseSource.failingWith(new GitHubSourceException(
+				GuideErrorCode.GITHUB_RATE_LIMITED, 45L));
+
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide",
+						  "runtime":{"operatingSystem":"MACOS","architecture":"ARM64"}
+						}
+						"""))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(header().string("Retry-After", "45"))
+				.andExpect(jsonPath("$.code").value("GITHUB_RATE_LIMITED"))
+				.andExpect(jsonPath("$.retryAfterSeconds").value(45));
+	}
+
+	@Test
+	void returnsLinuxFamilyQuestionAndNoMatchAsNormalRecommendationStates() throws Exception {
+		releaseSource.returning(new RepositoryReleases(List.of(new RepositoryRelease(
+				41L,
+				null,
+				"v2.0.0",
+				"https://github.com/octo/example/releases/tag/v2.0.0",
+				Instant.parse("2026-08-31T12:00:00Z"),
+				false,
+				false,
+				1,
+				0,
+				List.of(new RepositoryReleaseAsset(
+						51L,
+						"yuki-linux-x64.deb",
+						2048L,
+						"https://github.com/octo/example/releases/download/v2.0.0/"
+								+ "yuki-linux-x64.deb"))))));
+
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/octo/example",
+						  "runtime":{"operatingSystem":"LINUX","architecture":"X64"}
+						}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.releases.recommendation.status")
+						.value("NEEDS_LINUX_FAMILY"))
+				.andExpect(jsonPath("$.releases.recommendation.availableLinuxFamilies[0]")
+						.value("DEB"))
+				.andExpect(jsonPath("$.releases.recommendation.availableLinuxFamilies[1]")
+						.value("OTHER_OR_UNKNOWN"));
+
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/octo/example",
+						  "runtime":{"operatingSystem":"WINDOWS","architecture":"X64"}
+						}
+						"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.releases.recommendation.status").value("READY"))
+				.andExpect(jsonPath("$.releases.latestStable.matchingAssets").isEmpty());
+	}
+
 	private MockMvc mockMvc;
 	private FakeRepositoryFactsSource factsSource;
 	private FakeRepositoryReadmeSource readmeSource;
@@ -301,7 +434,7 @@ class GuideControllerTest {
 				readmeSource,
 				releaseSource,
 				new OnlineExperienceRecognizer(),
-				new ReleaseInterpreter());
+				new ReleaseInterpreter(new ReleaseAssetAdvisor()));
 		mockMvc = MockMvcBuilders.standaloneSetup(new GuideController(guideService))
 				.setControllerAdvice(new GlobalExceptionHandler())
 				.build();
@@ -391,5 +524,28 @@ class GuideControllerTest {
 				Arguments.of(GuideErrorCode.GITHUB_UPSTREAM_FAILURE, 502),
 				Arguments.of(GuideErrorCode.GITHUB_SERVICE_UNAVAILABLE, 503),
 				Arguments.of(GuideErrorCode.GITHUB_TIMEOUT, 504));
+	}
+
+	private static Stream<Arguments> invalidRuntimeRequests() {
+		return Stream.of(
+				Arguments.of("""
+						{
+						  "canonicalUrl":"https://github.com/octo/example",
+						  "runtime":{"operatingSystem":"ANDROID","architecture":"ARM64"}
+						}
+						""", "runtime.operatingSystem"),
+				Arguments.of("""
+						{
+						  "canonicalUrl":"https://github.com/octo/example",
+						  "runtime":{"operatingSystem":"WINDOWS","architecture":"X64",
+						             "linuxPackageFamily":"DEB"}
+						}
+						""", "runtime.linuxPackageFamily"),
+				Arguments.of("""
+						{
+						  "canonicalUrl":"https://github.com/octo/example",
+						  "runtime":{"operatingSystem":"LINUX"}
+						}
+						""", "runtime.architecture"));
 	}
 }

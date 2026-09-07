@@ -6,6 +6,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.application.ReadmeContentUnsup
 import io.github.emiliatanovo.yukirepoguide.guide.application.ReleaseHistoryUnsupportedException;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.GuideErrorCode;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRepositoryUrlException;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.InvalidRuntimeEnvironmentException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -86,6 +87,17 @@ public final class GlobalExceptionHandler {
 	@ExceptionHandler(InvalidRepositoryUrlException.class)
 	public ProblemDetail handleInvalidRepositoryUrl(InvalidRepositoryUrlException exception) {
 		return invalidRepositoryUrlProblem(exception.getMessage());
+	}
+
+	@ExceptionHandler(InvalidRuntimeEnvironmentException.class)
+	public ProblemDetail handleInvalidRuntimeEnvironment(
+			InvalidRuntimeEnvironmentException exception) {
+		var problem = ProblemDetail.forStatusAndDetail(
+				HttpStatus.BAD_REQUEST, exception.getMessage());
+		problem.setTitle("运行环境无效");
+		problem.setProperty("code", "INVALID_RUNTIME_ENVIRONMENT");
+		problem.setProperty("field", exception.field());
+		return problem;
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
