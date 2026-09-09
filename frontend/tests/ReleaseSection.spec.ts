@@ -17,7 +17,12 @@ describe('ReleaseSection', () => {
               sizeBytes: 2048,
               downloadUrl: 'https://github.com/octo/example/releases/download/v2.0.0/yuki.zip',
               evidenceId: 'github-release-asset-51',
+              role: 'MANUAL_ARCHIVE',
+              assessment: null,
             }],
+            matchingAssets: [],
+            matchingAssetCount: 0,
+            matchingAssetsTruncated: false,
             reportedAssetCount: 1,
             excludedAssetCount: 0,
             assetsTruncated: false,
@@ -29,6 +34,9 @@ describe('ReleaseSection', () => {
             tagName: 'v2.1.0-beta',
             publishedAt: '2026-09-01T12:00:00Z',
             assets: [],
+            matchingAssets: [],
+            matchingAssetCount: 0,
+            matchingAssetsTruncated: false,
             reportedAssetCount: 0,
             excludedAssetCount: 0,
             assetsTruncated: false,
@@ -36,6 +44,9 @@ describe('ReleaseSection', () => {
             evidenceId: 'github-release-42',
           },
           failure: null,
+          recommendation: {
+            status: 'NOT_REQUESTED', runtime: null, availableLinuxFamilies: [],
+          },
         },
         evidence: {
           'github-release-41': {
@@ -56,6 +67,10 @@ describe('ReleaseSection', () => {
         retryDisabled: false,
         retryMessage: '',
         errorMessage: '',
+        recommendationBusy: false,
+        recommendationDisabled: false,
+        recommendationRetryMessage: '',
+        recommendationErrorMessage: '',
       },
     })
 
@@ -64,6 +79,8 @@ describe('ReleaseSection', () => {
     expect(wrapper.text()).toContain('最新预览版')
     expect(wrapper.text()).toContain('v2.1.0-beta')
     expect(wrapper.text()).toContain('2.0 KB')
+    expect(wrapper.text()).toContain('原始资源列表（按文件名排序）')
+    expect(wrapper.text()).toContain('手动压缩资源')
     expect(wrapper.text()).toContain('未经 RepoGuide 安全认证')
     expect(wrapper.text()).toContain('GitHub Asset ID：51')
     expect(wrapper.get('a[href*="yuki.zip"]').attributes()).toMatchObject({
@@ -80,12 +97,19 @@ describe('ReleaseSection', () => {
           latestStable: null,
           latestPrerelease: null,
           failure: { code: 'GITHUB_TIMEOUT', retryable: true, retryAfterSeconds: null },
+          recommendation: {
+            status: 'NOT_REQUESTED', runtime: null, availableLinuxFamilies: [],
+          },
         },
         evidence: {},
         retrying: false,
         retryDisabled: false,
         retryMessage: '请点击重试',
         errorMessage: '连接 GitHub 超时，请稍后重试。',
+        recommendationBusy: false,
+        recommendationDisabled: false,
+        recommendationRetryMessage: '',
+        recommendationErrorMessage: '',
       },
     })
 
@@ -97,11 +121,14 @@ describe('ReleaseSection', () => {
         status: 'FAILED',
         latestStable: null,
         latestPrerelease: null,
-        failure: {
+          failure: {
           code: 'RELEASE_HISTORY_UNSUPPORTED',
           retryable: false,
           retryAfterSeconds: null,
-        },
+          },
+          recommendation: {
+            status: 'NOT_REQUESTED', runtime: null, availableLinuxFamilies: [],
+          },
       },
     })
     expect(wrapper.find('button').exists()).toBe(false)

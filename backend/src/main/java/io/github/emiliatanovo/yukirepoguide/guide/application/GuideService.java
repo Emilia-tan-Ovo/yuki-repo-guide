@@ -13,6 +13,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -121,6 +122,14 @@ public final class GuideService {
 	public ReleaseSection retryReleases(String canonicalUrl) {
 		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
 		return releaseInterpreter.interpret(repositoryReleaseSource.fetchReleases(repository));
+	}
+
+	public ReleaseSection recommendReleases(
+			String canonicalUrl,
+			RuntimeEnvironment runtime) {
+		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
+		return releaseInterpreter.recommend(
+				repositoryReleaseSource.fetchReleases(repository), runtime);
 	}
 
 	private LanguageSection languageSection(RepositoryLanguageBytes languageBytes) {

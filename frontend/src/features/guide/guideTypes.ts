@@ -67,12 +67,44 @@ export interface LanguageSection {
 export type ReleaseSectionStatus = 'AVAILABLE' | 'NOT_PROVIDED' | 'FAILED'
 export type ReleaseWarning = 'PRERELEASE' | 'SOME_ASSETS_OMITTED'
 export type ReleaseChannel = 'STABLE' | 'PRERELEASE'
+export type RuntimeOperatingSystem = 'WINDOWS' | 'MACOS' | 'LINUX'
+export type ProcessorArchitecture = 'X64' | 'ARM64'
+export type LinuxPackageFamily = 'DEB' | 'RPM' | 'ARCH' | 'ALPINE' | 'OTHER_OR_UNKNOWN'
+export type ReleaseAssetRole =
+  | 'STANDARD_INSTALLER'
+  | 'PORTABLE'
+  | 'MANUAL_ARCHIVE'
+  | 'AUXILIARY'
+  | 'SOURCE'
+  | 'UNKNOWN'
+export type ReleaseAssetMatchStatus =
+  | 'MATCHED'
+  | 'POSSIBLY_APPLICABLE'
+  | 'NOT_MATCHED'
+  | 'UNABLE_TO_CONFIRM'
+export type ReleaseRecommendationStatus = 'NOT_REQUESTED' | 'NEEDS_LINUX_FAMILY' | 'READY'
+
+export interface ConfirmedRuntime {
+  operatingSystem: RuntimeOperatingSystem
+  architecture: ProcessorArchitecture
+  linuxPackageFamily?: LinuxPackageFamily | null
+}
+
+export interface ReleaseAssetAssessment {
+  matchStatus: ReleaseAssetMatchStatus
+  directlyRecommended: boolean
+  detectedOperatingSystem?: RuntimeOperatingSystem | null
+  detectedArchitecture?: ProcessorArchitecture | null
+  detectedLinuxPackageFamily?: LinuxPackageFamily | null
+}
 
 export interface ReleaseAsset {
   name: string
   sizeBytes: number
   downloadUrl: string
   evidenceId: string
+  role: ReleaseAssetRole
+  assessment?: ReleaseAssetAssessment | null
 }
 
 export interface ReleaseSummary {
@@ -80,6 +112,9 @@ export interface ReleaseSummary {
   tagName: string
   publishedAt: string
   assets: ReleaseAsset[]
+  matchingAssets: ReleaseAsset[]
+  matchingAssetCount: number
+  matchingAssetsTruncated: boolean
   reportedAssetCount: number
   excludedAssetCount: number
   assetsTruncated: boolean
@@ -98,6 +133,11 @@ export interface ReleaseSection {
   latestStable?: ReleaseSummary | null
   latestPrerelease?: ReleaseSummary | null
   failure?: ReleaseFailure | null
+  recommendation: {
+    status: ReleaseRecommendationStatus
+    runtime?: ConfirmedRuntime | null
+    availableLinuxFamilies: LinuxPackageFamily[]
+  }
 }
 
 export interface Evidence {
@@ -146,6 +186,8 @@ export interface ReleaseRetryResponse {
   releases: ReleaseSection
   evidence: Record<string, Evidence>
 }
+
+export type ReleaseRecommendationResponse = ReleaseRetryResponse
 
 export interface ProblemDetail {
   title?: string

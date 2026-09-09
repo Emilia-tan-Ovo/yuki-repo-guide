@@ -1,9 +1,11 @@
 import type {
+  ConfirmedRuntime,
   GuideErrorCode,
   GuideResponse,
   LanguageRetryResponse,
   ReadmeRetryResponse,
   ReleaseRetryResponse,
+  ReleaseRecommendationResponse,
   ProblemDetail,
 } from './guideTypes.ts'
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
@@ -48,6 +50,14 @@ export async function retryReadme(canonicalUrl: string): Promise<ReadmeRetryResp
 
 export async function retryReleases(canonicalUrl: string): Promise<ReleaseRetryResponse> {
   return requestGuide<ReleaseRetryResponse>(() => sendReleaseRetryRequest(canonicalUrl))
+}
+
+export async function recommendReleases(
+  canonicalUrl: string,
+  runtime: ConfirmedRuntime,
+): Promise<ReleaseRecommendationResponse> {
+  return requestGuide<ReleaseRecommendationResponse>(() =>
+    sendReleaseRecommendationRequest(canonicalUrl, runtime))
 }
 
 async function requestGuide<T>(sendRequest: () => Promise<Response>): Promise<T> {
@@ -106,6 +116,17 @@ function sendReleaseRetryRequest(canonicalUrl: string): Promise<Response> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ canonicalUrl }),
+  })
+}
+
+function sendReleaseRecommendationRequest(
+  canonicalUrl: string,
+  runtime: ConfirmedRuntime,
+): Promise<Response> {
+  return fetchWithCsrfRetry('/api/guides/releases/recommendation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ canonicalUrl, runtime }),
   })
 }
 

@@ -8,6 +8,9 @@ public record ReleaseSummary(
 		String tagName,
 		Instant publishedAt,
 		List<ReleaseAsset> assets,
+		List<ReleaseAsset> matchingAssets,
+		int matchingAssetCount,
+		boolean matchingAssetsTruncated,
 		int reportedAssetCount,
 		int excludedAssetCount,
 		boolean assetsTruncated,
@@ -16,6 +19,7 @@ public record ReleaseSummary(
 
 	public ReleaseSummary {
 		assets = List.copyOf(assets);
+		matchingAssets = List.copyOf(matchingAssets);
 		warnings = List.copyOf(warnings);
 	}
 }

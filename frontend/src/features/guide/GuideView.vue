@@ -7,6 +7,7 @@ import {
   messageForLanguageCode,
   messageForReadmeCode,
   messageForReleaseCode,
+  recommendReleases,
   retryReadme,
   retryLanguages,
   retryReleases,
@@ -19,7 +20,7 @@ import {
 } from './languageRetry'
 import { applyReadmeRetry, isCurrentReadmeRetry } from './readmeRetry'
 import { applyReleaseRetry, isCurrentReleaseRetry } from './releaseRetry'
-import type { GuideResponse, GuideStatus } from './guideTypes'
+import type { ConfirmedRuntime, GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
 
@@ -43,6 +44,9 @@ const readmeRetryAvailableAt = ref<number | null>(null)
 const releaseRetrying = ref(false)
 const releaseErrorMessage = ref('')
 const releaseRetryAvailableAt = ref<number | null>(null)
+const releaseRecommendationBusy = ref(false)
+const releaseRecommendationErrorMessage = ref('')
+const releaseRecommendationRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
 const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
@@ -58,6 +62,12 @@ const releaseRetryState = computed(() =>
 )
 const releaseRetryDisabled = computed(() =>
   releaseRetrying.value || releaseRetryState.value.disabled,
+)
+const releaseRecommendationRetryState = computed(() =>
+  retryAvailability(releaseRecommendationRetryAvailableAt.value, currentTime.value),
+)
+const releaseRecommendationDisabled = computed(() =>
+  releaseRecommendationBusy.value || releaseRecommendationRetryState.value.disabled,
 )
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let guideVersion = 0
@@ -79,12 +89,15 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
   languageRetrying.value = false
   readmeRetrying.value = false
   releaseRetrying.value = false
+  releaseRecommendationBusy.value = false
   languageErrorMessage.value = ''
   readmeErrorMessage.value = ''
   releaseErrorMessage.value = ''
+  releaseRecommendationErrorMessage.value = ''
   retryAvailableAt.value = null
   readmeRetryAvailableAt.value = null
   releaseRetryAvailableAt.value = null
+  releaseRecommendationRetryAvailableAt.value = null
   status.value = 'submitting'
   guide.value = null
   errorMessage.value = ''
@@ -276,6 +289,11 @@ async function retryReleaseRegion(
             retryable: false,
             retryAfterSeconds: null,
           },
+          recommendation: {
+            status: 'NOT_REQUESTED',
+            runtime: null,
+            availableLinuxFamilies: [],
+          },
         },
       }
       releaseRetryAvailableAt.value = null
@@ -292,6 +310,66 @@ async function retryReleaseRegion(
       guideVersion,
     )) {
       releaseRetrying.value = false
+    }
+  }
+}
+
+async function recommendReleaseAssets(
+  runtime: ConfirmedRuntime,
+  allowAuthenticationRecovery = true,
+  requestedGuideVersion = guideVersion,
+) {
+  if (
+    !guide.value
+    || releaseRecommendationDisabled.value
+    || requestedGuideVersion !== guideVersion
+  ) {
+    return
+  }
+
+  const requestedCanonicalUrl = guide.value.repository.canonicalUrl
+  releaseRecommendationBusy.value = true
+  releaseRecommendationErrorMessage.value = ''
+  try {
+    const recommended = await recommendReleases(requestedCanonicalUrl, runtime)
+    if (!isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    guide.value = applyReleaseRetry(guide.value, recommended)
+    releaseRecommendationRetryAvailableAt.value = null
+  } catch (error) {
+    if (!isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      return
+    }
+    if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
+      emit('authenticationRequired', () =>
+        recommendReleaseAssets(runtime, false, requestedGuideVersion))
+      return
+    }
+    releaseRecommendationErrorMessage.value = error instanceof GuideApiError
+      ? messageForReleaseCode(error.code, error.message)
+      : 'Release 推荐暂时无法更新，请稍后重试。'
+    setReleaseRecommendationRetryDeadline(
+      error instanceof GuideApiError ? error.retryAfterSeconds : null,
+    )
+  } finally {
+    if (isCurrentReleaseRetry(
+      requestedCanonicalUrl,
+      requestedGuideVersion,
+      guide.value,
+      guideVersion,
+    )) {
+      releaseRecommendationBusy.value = false
     }
   }
 }
@@ -346,6 +424,12 @@ function setReleaseRetryDeadline(retryAfterSeconds?: number | null) {
   currentTime.value = now
   releaseRetryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
 }
+
+function setReleaseRecommendationRetryDeadline(retryAfterSeconds?: number | null) {
+  const now = Date.now()
+  currentTime.value = now
+  releaseRecommendationRetryAvailableAt.value = createRetryDeadline(retryAfterSeconds, now)
+}
 </script>
 
 <template>
@@ -386,9 +470,14 @@ function setReleaseRetryDeadline(retryAfterSeconds?: number | null) {
           :release-retry-disabled="releaseRetryDisabled"
           :release-retry-message="releaseRetryState.message"
           :release-error-message="releaseErrorMessage"
+          :release-recommendation-busy="releaseRecommendationBusy"
+          :release-recommendation-disabled="releaseRecommendationDisabled"
+          :release-recommendation-retry-message="releaseRecommendationRetryState.message"
+          :release-recommendation-error-message="releaseRecommendationErrorMessage"
           @retry-languages="retryLanguageRegion"
           @retry-readme="retryReadmeRegion"
           @retry-releases="retryReleaseRegion"
+          @recommend-releases="recommendReleaseAssets"
         />
         <div v-else-if="status === 'error'" class="error-message" role="alert">
           <span aria-hidden="true">!</span>

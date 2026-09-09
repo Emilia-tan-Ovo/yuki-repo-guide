@@ -42,4 +42,12 @@ public final class GuideController {
 		return ReleaseRetryResponse.from(
 				guideService.retryReleases(request.canonicalUrl()));
 	}
+
+	@PostMapping("/releases/recommendation")
+	public ReleaseRecommendationResponse recommendReleases(
+			@Valid @RequestBody ReleaseRecommendationRequest request) {
+		return ReleaseRecommendationResponse.from(
+				guideService.recommendReleases(
+						request.canonicalUrl(), request.confirmedRuntime()));
+	}
 }

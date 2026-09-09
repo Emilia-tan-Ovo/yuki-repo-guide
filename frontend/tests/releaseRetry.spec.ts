@@ -77,6 +77,9 @@ describe('Release retry', () => {
       languages: { status: 'NOT_PROVIDED', items: [], failure: null, evidenceId: null },
       releases: {
         status: 'AVAILABLE', latestStable: null, latestPrerelease: null, failure: null,
+        recommendation: {
+          status: 'NOT_REQUESTED', runtime: null, availableLinuxFamilies: [],
+        },
       },
       evidence: {
         'repository-metadata': { type: 'REPOSITORY', source: 'GitHub', languages: [] },
@@ -87,6 +90,9 @@ describe('Release retry', () => {
     const retried = {
       releases: {
         status: 'AVAILABLE', latestStable: null, latestPrerelease: null, failure: null,
+        recommendation: {
+          status: 'NOT_REQUESTED', runtime: null, availableLinuxFamilies: [],
+        },
       },
       evidence: {
         'new-release': { type: 'RELEASE', source: 'GitHub Releases REST API', languages: [] },

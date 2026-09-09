@@ -4,5 +4,7 @@ public record ReleaseAsset(
 		String name,
 		long sizeBytes,
 		String downloadUrl,
-		String evidenceId) {
+		String evidenceId,
+		ReleaseAssetRole role,
+		ReleaseAssetAssessment assessment) {
 }

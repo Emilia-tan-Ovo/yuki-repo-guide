@@ -17,14 +17,23 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceCandidate;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.OnlineExperienceWarning;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAsset;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetAssessment;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetMatchStatus;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetRole;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseAssetEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseChannel;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseEvidence;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseFailure;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseRecommendation;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseRecommendationStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSection;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSectionStatus;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseSummary;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.ReleaseWarning;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.LinuxPackageFamily;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.ProcessorArchitecture;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeOperatingSystem;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -157,14 +166,44 @@ public record GuideResponse(
 			ReleaseSectionStatus status,
 			Release latestStable,
 			Release latestPrerelease,
-			ReleaseFailureResponse failure) {
+			ReleaseFailureResponse failure,
+			Recommendation recommendation) {
 
 		public static Releases from(ReleaseSection section) {
 			return new Releases(
 					section.status(),
 					Release.from(section.latestStable()),
 					Release.from(section.latestPrerelease()),
-					ReleaseFailureResponse.from(section.failure()));
+					ReleaseFailureResponse.from(section.failure()),
+					Recommendation.from(section.recommendation()));
+		}
+	}
+
+	public record Recommendation(
+			ReleaseRecommendationStatus status,
+			ConfirmedRuntime runtime,
+			List<LinuxPackageFamily> availableLinuxFamilies) {
+
+		private static Recommendation from(ReleaseRecommendation recommendation) {
+			return new Recommendation(
+					recommendation.status(),
+					ConfirmedRuntime.from(recommendation.runtime()),
+					recommendation.availableLinuxFamilies());
+		}
+	}
+
+	public record ConfirmedRuntime(
+			RuntimeOperatingSystem operatingSystem,
+			ProcessorArchitecture architecture,
+			LinuxPackageFamily linuxPackageFamily) {
+
+		private static ConfirmedRuntime from(RuntimeEnvironment runtime) {
+			return runtime == null
+					? null
+					: new ConfirmedRuntime(
+							runtime.operatingSystem(),
+							runtime.architecture(),
+							runtime.linuxPackageFamily());
 		}
 	}
 
@@ -173,6 +212,9 @@ public record GuideResponse(
 			String tagName,
 			Instant publishedAt,
 			List<Asset> assets,
+			List<Asset> matchingAssets,
+			int matchingAssetCount,
+			boolean matchingAssetsTruncated,
 			int reportedAssetCount,
 			int excludedAssetCount,
 			boolean assetsTruncated,
@@ -181,6 +223,7 @@ public record GuideResponse(
 
 		public Release {
 			assets = List.copyOf(assets);
+			matchingAssets = List.copyOf(matchingAssets);
 			warnings = List.copyOf(warnings);
 		}
 
@@ -192,6 +235,9 @@ public record GuideResponse(
 							summary.tagName(),
 							summary.publishedAt(),
 							summary.assets().stream().map(Asset::from).toList(),
+							summary.matchingAssets().stream().map(Asset::from).toList(),
+							summary.matchingAssetCount(),
+							summary.matchingAssetsTruncated(),
 							summary.reportedAssetCount(),
 							summary.excludedAssetCount(),
 							summary.assetsTruncated(),
@@ -200,11 +246,41 @@ public record GuideResponse(
 		}
 	}
 
-	public record Asset(String name, long sizeBytes, String downloadUrl, String evidenceId) {
+	public record Asset(
+			String name,
+			long sizeBytes,
+			String downloadUrl,
+			String evidenceId,
+			ReleaseAssetRole role,
+			Assessment assessment) {
 
 		private static Asset from(ReleaseAsset asset) {
 			return new Asset(
-					asset.name(), asset.sizeBytes(), asset.downloadUrl(), asset.evidenceId());
+					asset.name(),
+					asset.sizeBytes(),
+					asset.downloadUrl(),
+					asset.evidenceId(),
+					asset.role(),
+					Assessment.from(asset.assessment()));
+		}
+	}
+
+	public record Assessment(
+			ReleaseAssetMatchStatus matchStatus,
+			boolean directlyRecommended,
+			RuntimeOperatingSystem detectedOperatingSystem,
+			ProcessorArchitecture detectedArchitecture,
+			LinuxPackageFamily detectedLinuxPackageFamily) {
+
+		private static Assessment from(ReleaseAssetAssessment assessment) {
+			return assessment == null
+					? null
+					: new Assessment(
+							assessment.matchStatus(),
+							assessment.directlyRecommended(),
+							assessment.detectedOperatingSystem(),
+							assessment.detectedArchitecture(),
+							assessment.detectedLinuxPackageFamily());
 		}
 	}
 

@@ -80,6 +80,34 @@ class GuideAccessSecurityTest {
 	}
 
 	@Test
+	void rejectsReleaseRecommendationWithoutTrialAccess() throws Exception {
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.with(csrf())
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide",
+						  "runtime":{"operatingSystem":"WINDOWS","architecture":"X64"}
+						}
+						"""))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void rejectsAuthenticatedReleaseRecommendationWithoutCsrf() throws Exception {
+		mockMvc.perform(post("/api/guides/releases/recommendation")
+				.with(user("trial-user"))
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{
+						  "canonicalUrl":"https://github.com/Emilia-tan-Ovo/yuki-repo-guide",
+						  "runtime":{"operatingSystem":"WINDOWS","architecture":"X64"}
+						}
+						"""))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
 	void doesNotExposeUnlistedResourcesByDefault() throws Exception {
 		mockMvc.perform(get("/internal"))
 				.andExpect(status().isUnauthorized());
