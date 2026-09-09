@@ -111,6 +111,26 @@ class ReleaseAssetAdvisorTest {
 		assertThat(advice.decisions().get(prereleaseMsi.id()).directlyRecommended()).isFalse();
 	}
 
+	@ParameterizedTest(name = "{0}")
+	@MethodSource("conflictingLinuxFamilyCases")
+	void treatsConflictingLinuxPackageFamilySignalsAsUnableToConfirm(
+			String fileName,
+			LinuxPackageFamily runtimeFamily) {
+		var conflictingAsset = asset(1L, fileName);
+		var runtime = new RuntimeEnvironment(
+				RuntimeOperatingSystem.LINUX,
+				ProcessorArchitecture.X64,
+				runtimeFamily);
+
+		var advice = advisor.advise(List.of(conflictingAsset), List.of(), runtime);
+
+		var decision = advice.decisions().get(conflictingAsset.id());
+		assertThat(decision.matchStatus())
+				.isEqualTo(ReleaseAssetMatchStatus.UNABLE_TO_CONFIRM);
+		assertThat(decision.detectedLinuxPackageFamily()).isNull();
+		assertThat(decision.directlyRecommended()).isFalse();
+	}
+
 	@ParameterizedTest(name = "{0} {1}")
 	@MethodSource("supportedRuntimeCombinations")
 	void deterministicallyMatchesAllSixSupportedRuntimeCombinations(
@@ -196,6 +216,13 @@ class ReleaseAssetAdvisorTest {
 						RuntimeOperatingSystem.LINUX,
 						ProcessorArchitecture.ARM64,
 						"yuki-linux-arm64.AppImage"));
+	}
+
+	private static Stream<Arguments> conflictingLinuxFamilyCases() {
+		return Stream.of(
+				Arguments.of("yuki-ubuntu-x64.rpm", LinuxPackageFamily.DEB),
+				Arguments.of("yuki-ubuntu-x64.pkg.tar.zst", LinuxPackageFamily.ARCH),
+				Arguments.of("yuki-alpine-x64.rpm", LinuxPackageFamily.RPM));
 	}
 
 	private RepositoryReleaseAsset asset(long id, String name) {

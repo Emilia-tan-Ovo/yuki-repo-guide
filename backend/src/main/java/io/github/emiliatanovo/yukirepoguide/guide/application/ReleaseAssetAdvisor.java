@@ -204,9 +204,10 @@ public final class ReleaseAssetAdvisor {
 				|| (name.endsWith(".pkg") && !archPackage)) {
 			operatingSystems.add(RuntimeOperatingSystem.MACOS);
 		}
-		LinuxPackageFamily linuxPackageFamily = linuxFamily(name, alpineContext);
+		Set<LinuxPackageFamily> linuxPackageFamilies = linuxFamilies(name, alpineContext);
+		LinuxPackageFamily linuxPackageFamily = single(linuxPackageFamilies);
 		if (hasToken(name, "linux")
-				|| linuxPackageFamily != null
+				|| !linuxPackageFamilies.isEmpty()
 				|| endsWithAny(name, ".appimage", ".flatpak", ".snap")) {
 			operatingSystems.add(RuntimeOperatingSystem.LINUX);
 		}
@@ -227,8 +228,9 @@ public final class ReleaseAssetAdvisor {
 		boolean unsupportedOperatingSystem = hasAnyToken(
 				name, "android", "ios", "freebsd", "openbsd", "netbsd");
 		boolean unresolvedLinuxAbi = operatingSystems.contains(RuntimeOperatingSystem.LINUX)
-				&& linuxPackageFamily == null
+				&& linuxPackageFamilies.isEmpty()
 				&& hasAnyToken(name, "musl", "gnu", "glibc");
+		boolean conflictingLinuxPackageFamilies = linuxPackageFamilies.size() > 1;
 
 		return new AssetSignals(
 				name,
@@ -238,28 +240,29 @@ public final class ReleaseAssetAdvisor {
 				hasAnyToken(name, "universal", "universal2", "noarch"),
 				unsupportedOperatingSystem,
 				unsupportedArchitecture,
-				unresolvedLinuxAbi);
+				conflictingLinuxPackageFamilies || unresolvedLinuxAbi);
 	}
 
-	private LinuxPackageFamily linuxFamily(String name, boolean alpineContext) {
+	private Set<LinuxPackageFamily> linuxFamilies(String name, boolean alpineContext) {
+		Set<LinuxPackageFamily> families = EnumSet.noneOf(LinuxPackageFamily.class);
 		if (name.endsWith(".pkg.tar.zst")
 				|| hasAnyToken(name, "archlinux", "manjaro")) {
-			return LinuxPackageFamily.ARCH;
+			families.add(LinuxPackageFamily.ARCH);
 		}
 		if (name.endsWith(".deb")
 				|| hasAnyToken(name, "debian", "ubuntu", "mint")) {
-			return LinuxPackageFamily.DEB;
+			families.add(LinuxPackageFamily.DEB);
 		}
 		if (name.endsWith(".rpm")
 				|| hasAnyToken(
 						name,
 						"fedora", "rhel", "centos", "rocky", "alma", "suse", "opensuse")) {
-			return LinuxPackageFamily.RPM;
+			families.add(LinuxPackageFamily.RPM);
 		}
 		if (hasToken(name, "alpine") || (name.endsWith(".apk") && alpineContext)) {
-			return LinuxPackageFamily.ALPINE;
+			families.add(LinuxPackageFamily.ALPINE);
 		}
-		return null;
+		return families;
 	}
 
 	private ReleaseAssetRole role(AssetSignals signals) {
