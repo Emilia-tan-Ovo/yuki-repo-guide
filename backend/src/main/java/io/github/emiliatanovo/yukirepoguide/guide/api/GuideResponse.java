@@ -46,7 +46,8 @@ public record GuideResponse(
 		Readme readme,
 		Languages languages,
 		Releases releases,
-		Map<String, Evidence> evidence) {
+		Map<String, Evidence> evidence,
+		String explanationInputId) {
 
 	public static GuideResponse from(ProjectGuide guide) {
 		var facts = guide.repository();
@@ -67,7 +68,7 @@ public record GuideResponse(
 				Readme.from(guide.readme()),
 				Languages.from(guide.languages()),
 				Releases.from(guide.releases()),
-				evidence);
+				evidence, guide.explanationInputId());
 	}
 
 	public record Repository(

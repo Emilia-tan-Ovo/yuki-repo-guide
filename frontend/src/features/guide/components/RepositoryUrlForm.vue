@@ -38,7 +38,7 @@ function submitRepository() {
       </button>
     </div>
     <p id="repository-url-hint" class="hint">
-      当前支持公开的 github.com 仓库；不会保存你输入的地址。
+      当前支持公开的 github.com 仓库；生成介绍所需资料会临时保存，不建立个人历史记录。
     </p>
   </form>
 </template>

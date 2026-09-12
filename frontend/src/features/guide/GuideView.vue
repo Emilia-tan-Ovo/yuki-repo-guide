@@ -23,6 +23,8 @@ import { applyReleaseRetry, isCurrentReleaseRetry } from './releaseRetry'
 import type { ConfirmedRuntime, GuideResponse, GuideStatus } from './guideTypes'
 import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
+import ExplanationSection from './components/ExplanationSection.vue'
+import { useExplanation } from './useExplanation'
 
 defineProps<{
   loggingOut: boolean
@@ -49,6 +51,7 @@ const releaseRecommendationErrorMessage = ref('')
 const releaseRecommendationRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
+const explanation = useExplanation(currentTime, retry => emit('authenticationRequired', retry))
 const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
 const retryDisabled = computed(() => languageRetrying.value || retryState.value.disabled)
 const readmeRetryState = computed(() =>
@@ -79,6 +82,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  guideVersion += 1
   if (clockTimer !== undefined) {
     clearInterval(clockTimer)
   }
@@ -86,6 +90,8 @@ onBeforeUnmount(() => {
 
 async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = true) {
   guideVersion += 1
+  const requestedVersion = guideVersion
+  explanation.reset()
   languageRetrying.value = false
   readmeRetrying.value = false
   releaseRetrying.value = false
@@ -103,12 +109,16 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
   errorMessage.value = ''
 
   try {
-    guide.value = await createGuide(repositoryUrl)
+    const created = await createGuide(repositoryUrl)
+    if (requestedVersion !== guideVersion) return
+    guide.value = created
     initializeLanguageState()
     initializeReadmeState()
     initializeReleaseState()
     status.value = 'success'
+    if ('explanationInputId' in created) void explanation.load(created.explanationInputId)
   } catch (error) {
+    if (requestedVersion !== guideVersion) return
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
       status.value = 'idle'
       emit('authenticationRequired', () => submitGuide(repositoryUrl, false))
@@ -143,6 +153,7 @@ async function retryReadmeRegion(
       return
     }
     guide.value = applyReadmeRetry(guide.value, retried)
+    explanation.reset(true)
     initializeReadmeState()
   } catch (error) {
     if (!isCurrentReadmeRetry(
@@ -491,6 +502,15 @@ function setReleaseRecommendationRetryDeadline(retryAfterSeconds?: number | null
           <p>导览结果会安静地出现在这里。</p>
         </div>
       </Transition>
+      <ExplanationSection
+        v-if="status === 'success' && guide && (guide.explanationInputId || explanation.state.value !== 'idle')"
+        :state="explanation.state.value"
+        :result="explanation.result.value"
+        :disabled="explanation.disabled.value"
+        :retry-message="explanation.retryState.value.message"
+        @retry="explanation.retry()"
+        @regenerate="submitGuide(guide.repository.canonicalUrl)"
+      />
     </section>
 
     <footer>

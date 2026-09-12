@@ -20,6 +20,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @AutoConfigureMockMvc
 class GuideAccessSecurityTest {
+	@Test
+	void protectsExplanationWithSessionAndCsrf() throws Exception {
+		String body = "{\"explanationInputId\":\"11111111-1111-1111-1111-111111111111\"}";
+		mockMvc.perform(post("/api/guides/explanation").with(csrf())
+				.contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isUnauthorized());
+		mockMvc.perform(post("/api/guides/explanation").with(user("trial-user"))
+				.contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isForbidden());
+		mockMvc.perform(post("/api/guides/explanation").with(user("trial-user")).with(csrf())
+				.contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isGone());
+	}
 
 	@Autowired
 	private MockMvc mockMvc;

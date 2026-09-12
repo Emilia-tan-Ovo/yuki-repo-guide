@@ -15,6 +15,9 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import io.github.emiliatanovo.yukirepoguide.guide.explanation.*;
+import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReadme;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -34,6 +37,9 @@ public final class GuideService {
 	private final RepositoryReleaseSource repositoryReleaseSource;
 	private final OnlineExperienceRecognizer onlineExperienceRecognizer;
 	private final ReleaseInterpreter releaseInterpreter;
+	private final ExplanationSnapshots snapshots;
+	private final IntroductionGenerator introductions;
+	private final ExplanationInputSelector inputSelector;
 
 	public GuideService(
 			RepositoryUrlParser repositoryUrlParser,
@@ -42,20 +48,42 @@ public final class GuideService {
 			RepositoryReleaseSource repositoryReleaseSource,
 			OnlineExperienceRecognizer onlineExperienceRecognizer,
 			ReleaseInterpreter releaseInterpreter) {
+		this(repositoryUrlParser, repositoryFactsSource, repositoryReadmeSource, repositoryReleaseSource,
+				onlineExperienceRecognizer, releaseInterpreter,
+				new ExplanationSnapshots(ExplanationSettings.defaults(), java.time.Clock.systemUTC()),
+				new IntroductionGenerator((input, correction, remaining) -> {
+					throw new ExplanationException("EXPLANATION_NOT_CONFIGURED");
+				}, ExplanationSettings.defaults(), java.time.Clock.systemUTC()),
+				new ExplanationInputSelector(ExplanationSettings.defaults()));
+	}
+
+	@Autowired
+	public GuideService(RepositoryUrlParser repositoryUrlParser, RepositoryFactsSource repositoryFactsSource,
+			RepositoryReadmeSource repositoryReadmeSource, RepositoryReleaseSource repositoryReleaseSource,
+			OnlineExperienceRecognizer onlineExperienceRecognizer, ReleaseInterpreter releaseInterpreter,
+			ExplanationSnapshots snapshots, IntroductionGenerator introductions, ExplanationInputSelector inputSelector) {
 		this.repositoryUrlParser = repositoryUrlParser;
 		this.repositoryFactsSource = repositoryFactsSource;
 		this.repositoryReadmeSource = repositoryReadmeSource;
 		this.repositoryReleaseSource = repositoryReleaseSource;
 		this.onlineExperienceRecognizer = onlineExperienceRecognizer;
 		this.releaseInterpreter = releaseInterpreter;
+		this.snapshots = snapshots;
+		this.introductions = introductions;
+		this.inputSelector = inputSelector;
 	}
 
 	public ProjectGuide createGuide(String rawUrl) {
+		return createGuide(rawUrl, null);
+	}
+
+	public ProjectGuide createGuide(String rawUrl, String snapshotOwner) {
 		RepositoryRef requestedRepository = repositoryUrlParser.parse(rawUrl);
 		RepositoryFacts repository = repositoryFactsSource.fetchMetadata(requestedRepository);
 		Map<String, GuideEvidence> evidence = new LinkedHashMap<>();
 		evidence.put(REPOSITORY_EVIDENCE_ID, repositoryEvidence(repository));
-		ReadmeSection readme = initialReadmeSection(repository.reference());
+		ReadmeResult readmeResult = initialReadmeSection(repository.reference());
+		ReadmeSection readme = readmeResult.section();
 		evidence.putAll(readme.evidence());
 		LanguageSection languages;
 		try {
@@ -86,24 +114,36 @@ public final class GuideService {
 					null);
 		}
 		return new ProjectGuide(
-				repository, REPOSITORY_EVIDENCE_ID, readme, languages, releases, evidence);
+				repository, REPOSITORY_EVIDENCE_ID, readme, languages, releases, evidence,
+				snapshots.save(snapshotOwner, inputSelector.select(repository, readmeResult.source())));
 	}
 
-	private ReadmeSection initialReadmeSection(RepositoryRef repository) {
+	public ExplanationResult explain(String inputId, String snapshotOwner) {
+		ExplanationInput input = snapshots.acquire(inputId, snapshotOwner);
 		try {
-			return repositoryReadmeSource.fetchReadme(repository)
-					.map(onlineExperienceRecognizer::recognize)
-					.orElseGet(ReadmeSection::notProvided);
+			return introductions.generate(input);
+		} finally {
+			snapshots.release(inputId);
+		}
+	}
+
+	private record ReadmeResult(ReadmeSection section, RepositoryReadme source) {}
+
+	private ReadmeResult initialReadmeSection(RepositoryRef repository) {
+		try {
+			var source = repositoryReadmeSource.fetchReadme(repository).orElse(null);
+			return new ReadmeResult(source == null ? ReadmeSection.notProvided()
+					: onlineExperienceRecognizer.recognize(source), source);
 		}
 		catch (ReadmeContentUnsupportedException exception) {
-			return ReadmeSection.failed(
+			return new ReadmeResult(ReadmeSection.failed(
 					GuideErrorCode.README_CONTENT_UNSUPPORTED,
 					false,
-					null);
+					null), null);
 		}
 		catch (GitHubSourceException exception) {
-			return ReadmeSection.failed(
-					exception.code(), true, exception.retryAfterSeconds());
+			return new ReadmeResult(ReadmeSection.failed(
+					exception.code(), true, exception.retryAfterSeconds()), null);
 		}
 	}
 

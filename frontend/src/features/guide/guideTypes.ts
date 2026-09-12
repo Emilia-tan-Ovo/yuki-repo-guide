@@ -165,6 +165,7 @@ export interface Evidence {
 }
 
 export interface GuideResponse {
+  explanationInputId?: string | null
   repository: RepositorySummary
   readme: ReadmeSection
   languages: LanguageSection

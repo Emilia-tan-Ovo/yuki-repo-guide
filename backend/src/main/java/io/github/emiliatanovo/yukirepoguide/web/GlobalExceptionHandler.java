@@ -19,6 +19,17 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public final class GlobalExceptionHandler {
 
+	@ExceptionHandler(io.github.emiliatanovo.yukirepoguide.guide.explanation.ExplanationException.class)
+	public ProblemDetail handleExplanationState(
+			io.github.emiliatanovo.yukirepoguide.guide.explanation.ExplanationException exception) {
+		boolean busy = "EXPLANATION_IN_PROGRESS".equals(exception.code());
+		var problem = ProblemDetail.forStatusAndDetail(
+				busy ? HttpStatus.CONFLICT : HttpStatus.GONE,
+				busy ? "介绍正在生成，请等待当前请求完成。" : "介绍所需资料已过期或不可用，请重新生成导览。");
+		problem.setProperty("code", exception.code());
+		return problem;
+	}
+
 	@ExceptionHandler(GitHubSourceException.class)
 	public ResponseEntity<ProblemDetail> handleGitHubSourceFailure(
 			GitHubSourceException exception) {
@@ -102,6 +113,12 @@ public final class GlobalExceptionHandler {
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ProblemDetail handleInvalidRequest(MethodArgumentNotValidException exception) {
+		if (exception.getBindingResult().getTarget() instanceof
+				io.github.emiliatanovo.yukirepoguide.guide.api.ExplanationRequest) {
+			var problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "介绍请求标识无效，请重新生成导览。");
+			problem.setProperty("code", "INVALID_EXPLANATION_INPUT");
+			return problem;
+		}
 		var fieldError = exception.getBindingResult().getFieldError();
 		var detail = fieldError != null && fieldError.getDefaultMessage() != null
 				? fieldError.getDefaultMessage()
