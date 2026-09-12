@@ -42,6 +42,29 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GuideControllerTest {
+	@Test
+	void explanationUsesTheCreatingSessionAndReturnsOnlyItsRegion() throws Exception {
+		var session = new org.springframework.mock.web.MockHttpSession();
+		var created = mockMvc.perform(post("/api/guides").session(session)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"repositoryUrl\":\"https://github.com/Emilia-tan-Ovo/yuki-repo-guide\"}"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.explanationInputId").isString())
+				.andReturn();
+		String id = tools.jackson.databind.json.JsonMapper.builder().build()
+				.readTree(created.getResponse().getContentAsString()).path("explanationInputId").asString();
+		String body = "{\"explanationInputId\":\"" + id + "\"}";
+		mockMvc.perform(post("/api/guides/explanation").session(session)
+				.contentType(MediaType.APPLICATION_JSON).content(body))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UNAVAILABLE"))
+				.andExpect(jsonPath("$.code").value("EXPLANATION_NOT_CONFIGURED"))
+				.andExpect(jsonPath("$.repository").doesNotExist());
+		mockMvc.perform(post("/api/guides/explanation").session(new org.springframework.mock.web.MockHttpSession())
+				.contentType(MediaType.APPLICATION_JSON).content(body))
+				.andExpect(status().isGone()).andExpect(jsonPath("$.code").value("EXPLANATION_INPUT_EXPIRED"));
+		mockMvc.perform(post("/api/guides/explanation").session(session)
+				.contentType(MediaType.APPLICATION_JSON).content("{\"explanationInputId\":\"\"}"))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_EXPLANATION_INPUT"));
+	}
 
 	@Test
 	void returnsReadmeCandidatesWithPlainEvidenceAndKeepsHomepageSeparate() throws Exception {

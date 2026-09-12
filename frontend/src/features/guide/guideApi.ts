@@ -9,6 +9,15 @@ import type {
   ProblemDetail,
 } from './guideTypes.ts'
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
+import type { ExplanationResult } from './explanationTypes'
+
+export async function requestExplanation(explanationInputId: string): Promise<ExplanationResult> {
+  return requestGuide<ExplanationResult>(() => fetchWithCsrfRetry('/api/guides/explanation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ explanationInputId }),
+  }))
+}
 
 export class GuideApiError extends Error {
   readonly code?: string

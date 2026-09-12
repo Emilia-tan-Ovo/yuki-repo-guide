@@ -2,6 +2,8 @@ package io.github.emiliatanovo.yukirepoguide.guide.api;
 
 import io.github.emiliatanovo.yukirepoguide.guide.application.GuideService;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpSession;
+import io.github.emiliatanovo.yukirepoguide.guide.explanation.ExplanationResult;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,8 +20,13 @@ public final class GuideController {
 	}
 
 	@PostMapping
-	public GuideResponse createGuide(@Valid @RequestBody CreateGuideRequest request) {
-		return GuideResponse.from(guideService.createGuide(request.repositoryUrl()));
+	public GuideResponse createGuide(@Valid @RequestBody CreateGuideRequest request, HttpSession session) {
+		return GuideResponse.from(guideService.createGuide(request.repositoryUrl(), session.getId()));
+	}
+
+	@PostMapping("/explanation")
+	public ExplanationResult explain(@Valid @RequestBody ExplanationRequest request, HttpSession session) {
+		return guideService.explain(request.explanationInputId(), session.getId());
 	}
 
 	@PostMapping("/languages/retry")
