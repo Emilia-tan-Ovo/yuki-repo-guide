@@ -110,6 +110,26 @@ class GuideQuickStartTest {
                 "https://github.com/octo/notes/blob/main/README.md", "## Quick Start\n\n启动应用：\n\n```sh\njava -jar app.jar\n```\n"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.MethodSource("markdownCommands")
+    void preservesCommandsInsideMarkdownContainersWithoutCopyingContainerMarkers(String markdown, String expected) {
+        var source = readme().returning(new RepositoryReadme("README.md", "abc", "https://github.com/octo/notes/blob/main/README.md",
+                "## Quick Start\n\n启动应用：\n\n" + markdown));
+        var service = service(source, (request, remaining) -> VALID);
+        var result = service.quickStart(service.createGuide("url", "a").explanationInputId(), "a");
+        assertThat(result.steps().getFirst().blocks().getFirst().text()).isEqualTo(expected);
+    }
+    static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> markdownCommands() {
+        return java.util.stream.Stream.of(
+                org.junit.jupiter.params.provider.Arguments.of("> ```sh\n> echo first\n> echo second\n> ```\n", "echo first\necho second\n"),
+                org.junit.jupiter.params.provider.Arguments.of("- ```sh\n  echo first\n  echo second\n  ```\n", "echo first\necho second\n"),
+                org.junit.jupiter.params.provider.Arguments.of("  ```sh\n  echo first\n  ```\n", "echo first\n"),
+                org.junit.jupiter.params.provider.Arguments.of("````sh\necho first\n```", "echo first\n```"),
+                org.junit.jupiter.params.provider.Arguments.of("```sh\necho first", "echo first"),
+                org.junit.jupiter.params.provider.Arguments.of("```sh\r\necho first\r\n\r\necho second\r\n```\r\n", "echo first\r\n\r\necho second\r\n"),
+                org.junit.jupiter.params.provider.Arguments.of("    echo first\n    echo second\n", "echo first\necho second\n"));
+    }
+
     @Test
     void doesNotSpendTheQuickStartBudgetOnUnrelatedIntroductionSections() {
         var source = readme().returning(new RepositoryReadme("README.md", "abc", "https://github.com/octo/notes/blob/main/README.md",

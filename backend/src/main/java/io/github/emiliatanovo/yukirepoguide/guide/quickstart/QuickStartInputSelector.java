@@ -45,9 +45,10 @@ public final class QuickStartInputSelector {
             if (raw.isBlank()) continue;
             var kind = QuickStartInput.Kind.TEXT;
             if (node instanceof FencedCodeBlock fence) {
-                raw = fencedContent(readme.content(), fence);
+                raw = codeContent(readme.content(), fence, fence.getLiteral(), true);
                 kind = codeKind(fence.getInfo());
-            } else if (node instanceof IndentedCodeBlock) {
+            } else if (node instanceof IndentedCodeBlock code) {
+                raw = codeContent(readme.content(), code, code.getLiteral(), false);
                 kind = codeKind("");
             } else if (node instanceof Code) {
                 // A single-line inline code span is an exact source excerpt after removing delimiters.
@@ -57,6 +58,7 @@ public final class QuickStartInputSelector {
                 raw = raw.substring(ticks, raw.length() - ticks);
                 kind = QuickStartInput.Kind.CODE;
             }
+            if (raw == null) { truncated = true; continue; }
             if (raw.isBlank()) continue;
             int cost = raw.length() + section.length();
             if (used + cost > settings.maxInputCharacters()) { truncated = true; break; }
@@ -75,18 +77,28 @@ public final class QuickStartInputSelector {
             return QuickStartInput.Kind.CONFIGURATION;
         return QuickStartInput.Kind.CODE;
     }
-    private String fencedContent(String source, FencedCodeBlock node) {
+    private String codeContent(String source, Node node, String literal, boolean fenced) {
         var spans = node.getSourceSpans();
-        if (spans.size() < 2) return "";
-        var first = spans.getFirst();
-        int start = source.indexOf('\n', first.getInputIndex() + first.getLength());
-        if (start < 0) return "";
-        var last = spans.getLast();
-        String tail = source.substring(last.getInputIndex(), last.getInputIndex() + last.getLength()).strip();
-        char fence = source.charAt(first.getInputIndex());
-        boolean closed = tail.length() >= 3 && tail.chars().allMatch(c -> c == fence);
-        int end = closed ? last.getInputIndex() : last.getInputIndex() + last.getLength();
-        return source.substring(start + 1, end);
+        if (spans.isEmpty() || literal.isEmpty()) return "";
+        String[] lines = source.split("\n", -1);
+        String[] codeLines = literal.split("\n", -1);
+        int firstLine = spans.getFirst().getLineIndex() + (fenced ? 1 : 0);
+        var result = new StringBuilder();
+        int count = codeLines.length - (literal.endsWith("\n") ? 1 : 0);
+        for (int index = 0; index < count; index++) {
+            int lineIndex = firstLine + index;
+            if (lineIndex >= lines.length) return null;
+            String sourceLine = lines[lineIndex];
+            boolean crlf = sourceLine.endsWith("\r");
+            if (crlf) sourceLine = sourceLine.substring(0, sourceLine.length() - 1);
+            String codeLine = codeLines[index];
+            // The parser identifies Markdown container/indentation syntax. Copy only the exact
+            // source suffix it identifies as code, retaining the original line ending.
+            if (!sourceLine.endsWith(codeLine)) return null;
+            result.append(sourceLine.substring(sourceLine.length() - codeLine.length()));
+            if (lineIndex < lines.length - 1) result.append(crlf ? "\r\n" : "\n");
+        }
+        return result.toString();
     }
     private String excerpt(String source, Node node) {
         var spans = node.getSourceSpans();
