@@ -14,6 +14,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryFacts;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
+import io.github.emiliatanovo.yukirepoguide.guide.quickstart.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import io.github.emiliatanovo.yukirepoguide.guide.explanation.*;
@@ -40,6 +41,8 @@ public final class GuideService {
 	private final ExplanationSnapshots snapshots;
 	private final IntroductionGenerator introductions;
 	private final ExplanationInputSelector inputSelector;
+    private final QuickStartInputSelector quickSelector;
+    private final QuickStartGenerator quickStarts;
 
 	public GuideService(
 			RepositoryUrlParser repositoryUrlParser,
@@ -51,17 +54,29 @@ public final class GuideService {
 		this(repositoryUrlParser, repositoryFactsSource, repositoryReadmeSource, repositoryReleaseSource,
 				onlineExperienceRecognizer, releaseInterpreter,
 				new ExplanationSnapshots(ExplanationSettings.defaults(), java.time.Clock.systemUTC()),
-				new IntroductionGenerator((input, correction, remaining) -> {
+				new IntroductionGenerator((request, remaining) -> {
 					throw new ExplanationException("EXPLANATION_NOT_CONFIGURED");
 				}, ExplanationSettings.defaults(), java.time.Clock.systemUTC()),
 				new ExplanationInputSelector(ExplanationSettings.defaults()));
 	}
 
-	@Autowired
 	public GuideService(RepositoryUrlParser repositoryUrlParser, RepositoryFactsSource repositoryFactsSource,
 			RepositoryReadmeSource repositoryReadmeSource, RepositoryReleaseSource repositoryReleaseSource,
 			OnlineExperienceRecognizer onlineExperienceRecognizer, ReleaseInterpreter releaseInterpreter,
 			ExplanationSnapshots snapshots, IntroductionGenerator introductions, ExplanationInputSelector inputSelector) {
+        this(repositoryUrlParser, repositoryFactsSource, repositoryReadmeSource, repositoryReleaseSource,
+                onlineExperienceRecognizer, releaseInterpreter, snapshots, introductions, inputSelector,
+                new QuickStartInputSelector(QuickStartSettings.defaults()),
+                new QuickStartGenerator((request, remaining) -> { throw new ExplanationException("EXPLANATION_NOT_CONFIGURED"); },
+                        QuickStartSettings.defaults(), java.time.Clock.systemUTC()));
+    }
+
+    @Autowired
+    public GuideService(RepositoryUrlParser repositoryUrlParser, RepositoryFactsSource repositoryFactsSource,
+            RepositoryReadmeSource repositoryReadmeSource, RepositoryReleaseSource repositoryReleaseSource,
+            OnlineExperienceRecognizer onlineExperienceRecognizer, ReleaseInterpreter releaseInterpreter,
+            ExplanationSnapshots snapshots, IntroductionGenerator introductions, ExplanationInputSelector inputSelector,
+            QuickStartInputSelector quickSelector, QuickStartGenerator quickStarts) {
 		this.repositoryUrlParser = repositoryUrlParser;
 		this.repositoryFactsSource = repositoryFactsSource;
 		this.repositoryReadmeSource = repositoryReadmeSource;
@@ -71,6 +86,8 @@ public final class GuideService {
 		this.snapshots = snapshots;
 		this.introductions = introductions;
 		this.inputSelector = inputSelector;
+        this.quickSelector = quickSelector;
+        this.quickStarts = quickStarts;
 	}
 
 	public ProjectGuide createGuide(String rawUrl) {
@@ -115,7 +132,7 @@ public final class GuideService {
 		}
 		return new ProjectGuide(
 				repository, REPOSITORY_EVIDENCE_ID, readme, languages, releases, evidence,
-				snapshots.save(snapshotOwner, inputSelector.select(repository, readmeResult.source())));
+				snapshots.save(snapshotOwner, inputSelector.select(repository, readmeResult.source()), quickSelector.select(readmeResult.source(), readme.status())));
 	}
 
 	public ExplanationResult explain(String inputId, String snapshotOwner) {
@@ -127,7 +144,13 @@ public final class GuideService {
 		}
 	}
 
-	private record ReadmeResult(ReadmeSection section, RepositoryReadme source) {}
+	public QuickStartResult quickStart(String inputId, String snapshotOwner) {
+        var input = snapshots.acquireQuickStart(inputId, snapshotOwner);
+        try { return quickStarts.generate(input); }
+        finally { snapshots.releaseQuickStart(inputId); }
+    }
+
+    private record ReadmeResult(ReadmeSection section, RepositoryReadme source) {}
 
 	private ReadmeResult initialReadmeSection(RepositoryRef repository) {
 		try {

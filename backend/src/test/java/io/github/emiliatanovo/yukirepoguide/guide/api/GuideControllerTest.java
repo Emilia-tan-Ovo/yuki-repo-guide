@@ -42,8 +42,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GuideControllerTest {
-	@Test
-	void explanationUsesTheCreatingSessionAndReturnsOnlyItsRegion() throws Exception {
+	@ParameterizedTest
+	@org.junit.jupiter.params.provider.ValueSource(strings = {"/explanation", "/quick-start"})
+	void explanationUsesTheCreatingSessionAndReturnsOnlyItsRegion(String region) throws Exception {
+		readmeSource.returning(new RepositoryReadme("README.md", "abc",
+				"https://github.com/Emilia-tan-Ovo/yuki-repo-guide/blob/main/README.md", "## Install\n\n启动应用。"));
 		var session = new org.springframework.mock.web.MockHttpSession();
 		var created = mockMvc.perform(post("/api/guides").session(session)
 				.contentType(MediaType.APPLICATION_JSON)
@@ -53,15 +56,15 @@ class GuideControllerTest {
 		String id = tools.jackson.databind.json.JsonMapper.builder().build()
 				.readTree(created.getResponse().getContentAsString()).path("explanationInputId").asString();
 		String body = "{\"explanationInputId\":\"" + id + "\"}";
-		mockMvc.perform(post("/api/guides/explanation").session(session)
+		mockMvc.perform(post("/api/guides" + region).session(session)
 				.contentType(MediaType.APPLICATION_JSON).content(body))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.status").value("UNAVAILABLE"))
 				.andExpect(jsonPath("$.code").value("EXPLANATION_NOT_CONFIGURED"))
 				.andExpect(jsonPath("$.repository").doesNotExist());
-		mockMvc.perform(post("/api/guides/explanation").session(new org.springframework.mock.web.MockHttpSession())
+		mockMvc.perform(post("/api/guides" + region).session(new org.springframework.mock.web.MockHttpSession())
 				.contentType(MediaType.APPLICATION_JSON).content(body))
 				.andExpect(status().isGone()).andExpect(jsonPath("$.code").value("EXPLANATION_INPUT_EXPIRED"));
-		mockMvc.perform(post("/api/guides/explanation").session(session)
+		mockMvc.perform(post("/api/guides" + region).session(session)
 				.contentType(MediaType.APPLICATION_JSON).content("{\"explanationInputId\":\"\"}"))
 				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_EXPLANATION_INPUT"));
 	}

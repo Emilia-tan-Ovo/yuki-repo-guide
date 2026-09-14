@@ -25,6 +25,9 @@ import RepositoryIdentityCard from './components/RepositoryIdentityCard.vue'
 import RepositoryUrlForm from './components/RepositoryUrlForm.vue'
 import ExplanationSection from './components/ExplanationSection.vue'
 import { useExplanation } from './useExplanation'
+import QuickStartSection from './components/QuickStartSection.vue'
+import { useGeneratedRegion } from './useGeneratedRegion'
+import { requestQuickStart } from './guideApi'
 
 defineProps<{
   loggingOut: boolean
@@ -51,7 +54,17 @@ const releaseRecommendationErrorMessage = ref('')
 const releaseRecommendationRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
-const explanation = useExplanation(currentTime, retry => emit('authenticationRequired', retry))
+const explanation = useExplanation(currentTime, recoverExplanationAuthentication)
+const quickStart = useGeneratedRegion(currentTime, recoverExplanationAuthentication, requestQuickStart, result => result.status === 'AVAILABLE' ? 'available' : 'unavailable')
+const explanationRecoveries = new Set<() => Promise<void>>()
+function recoverExplanationAuthentication(retry: () => Promise<void>) {
+  explanationRecoveries.add(retry)
+  emit('authenticationRequired', async () => {
+    const retries = [...explanationRecoveries]
+    explanationRecoveries.clear()
+    await Promise.all(retries.map(resume => resume()))
+  })
+}
 const retryState = computed(() => retryAvailability(retryAvailableAt.value, currentTime.value))
 const retryDisabled = computed(() => languageRetrying.value || retryState.value.disabled)
 const readmeRetryState = computed(() =>
@@ -92,6 +105,8 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
   guideVersion += 1
   const requestedVersion = guideVersion
   explanation.reset()
+  quickStart.reset()
+  explanationRecoveries.clear()
   languageRetrying.value = false
   readmeRetrying.value = false
   releaseRetrying.value = false
@@ -116,7 +131,10 @@ async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = 
     initializeReadmeState()
     initializeReleaseState()
     status.value = 'success'
-    if ('explanationInputId' in created) void explanation.load(created.explanationInputId)
+    if ('explanationInputId' in created) {
+      void explanation.load(created.explanationInputId)
+      void quickStart.load(created.explanationInputId)
+    }
   } catch (error) {
     if (requestedVersion !== guideVersion) return
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
@@ -154,6 +172,8 @@ async function retryReadmeRegion(
     }
     guide.value = applyReadmeRetry(guide.value, retried)
     explanation.reset(true)
+    quickStart.reset(true)
+    explanationRecoveries.clear()
     initializeReadmeState()
   } catch (error) {
     if (!isCurrentReadmeRetry(
@@ -509,6 +529,15 @@ function setReleaseRecommendationRetryDeadline(retryAfterSeconds?: number | null
         :disabled="explanation.disabled.value"
         :retry-message="explanation.retryState.value.message"
         @retry="explanation.retry()"
+        @regenerate="submitGuide(guide.repository.canonicalUrl)"
+      />
+      <QuickStartSection
+        v-if="status === 'success' && guide && (guide.explanationInputId || quickStart.state.value !== 'idle')"
+        :state="quickStart.state.value"
+        :result="quickStart.result.value"
+        :disabled="quickStart.disabled.value"
+        :retry-message="quickStart.retryState.value.message"
+        @retry="quickStart.retry()"
         @regenerate="submitGuide(guide.repository.canonicalUrl)"
       />
     </section>

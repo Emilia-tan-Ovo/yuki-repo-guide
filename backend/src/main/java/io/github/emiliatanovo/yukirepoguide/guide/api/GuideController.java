@@ -29,6 +29,12 @@ public final class GuideController {
 		return guideService.explain(request.explanationInputId(), session.getId());
 	}
 
+	@PostMapping("/quick-start")
+	public io.github.emiliatanovo.yukirepoguide.guide.quickstart.QuickStartResult quickStart(
+			@Valid @RequestBody ExplanationRequest request, HttpSession session) {
+		return guideService.quickStart(request.explanationInputId(), session.getId());
+	}
+
 	@PostMapping("/languages/retry")
 	public LanguageRetryResponse retryLanguages(
 			@Valid @RequestBody RetryLanguagesRequest request) {
