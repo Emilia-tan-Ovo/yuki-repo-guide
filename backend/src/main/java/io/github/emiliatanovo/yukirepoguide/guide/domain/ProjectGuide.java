@@ -9,7 +9,13 @@ public record ProjectGuide(
 		LanguageSection languages,
 		ReleaseSection releases,
 		Map<String, GuideEvidence> evidence,
-		String explanationInputId) {
+		String explanationInputId,
+        io.github.emiliatanovo.yukirepoguide.guide.experience.ExperienceReferences experience) {
+
+    public ProjectGuide(RepositoryFacts repository, String repositoryEvidenceId, ReadmeSection readme,
+            LanguageSection languages, ReleaseSection releases, Map<String, GuideEvidence> evidence, String explanationInputId) {
+        this(repository, repositoryEvidenceId, readme, languages, releases, evidence, explanationInputId, null);
+    }
 
 	public ProjectGuide(RepositoryFacts repository, String repositoryEvidenceId, ReadmeSection readme,
 			LanguageSection languages, ReleaseSection releases, Map<String, GuideEvidence> evidence) {

@@ -307,9 +307,7 @@ public final class ReleaseAssetAdvisor {
 	}
 
 	private boolean eligible(ReleaseAssetRole role) {
-		return role == ReleaseAssetRole.STANDARD_INSTALLER
-				|| role == ReleaseAssetRole.PORTABLE
-				|| role == ReleaseAssetRole.MANUAL_ARCHIVE;
+		return role.isExperienceResource();
 	}
 
 	private int roleRank(ReleaseAssetRole role) {

@@ -7,7 +7,16 @@ import java.util.Map;
 
 public record ReleaseRetryResponse(
 		GuideResponse.Releases releases,
-		Map<String, GuideResponse.Evidence> evidence) {
+		Map<String, GuideResponse.Evidence> evidence, String resultId) {
+
+    public ReleaseRetryResponse(GuideResponse.Releases releases, Map<String, GuideResponse.Evidence> evidence) {
+        this(releases, evidence, null);
+    }
+
+    public static ReleaseRetryResponse from(io.github.emiliatanovo.yukirepoguide.guide.experience.RegisteredRegion<ReleaseSection> region) {
+        var response = from(region.value());
+        return new ReleaseRetryResponse(response.releases(), response.evidence(), region.resultId());
+    }
 
 	public static ReleaseRetryResponse from(ReleaseSection section) {
 		Map<String, GuideResponse.Evidence> evidence = new LinkedHashMap<>();

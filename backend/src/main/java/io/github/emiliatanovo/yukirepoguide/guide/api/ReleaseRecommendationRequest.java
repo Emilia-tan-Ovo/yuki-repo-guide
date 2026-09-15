@@ -11,7 +11,7 @@ import java.util.Locale;
 
 public record ReleaseRecommendationRequest(
 		@NotBlank(message = "缺少 GitHub 仓库地址。") String canonicalUrl,
-		ConfirmedRuntime runtime) {
+		ConfirmedRuntime runtime, String guideId) {
 
 	public RuntimeEnvironment confirmedRuntime() {
 		if (runtime == null) {
