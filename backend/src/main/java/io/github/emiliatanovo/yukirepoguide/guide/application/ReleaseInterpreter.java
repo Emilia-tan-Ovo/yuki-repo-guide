@@ -49,6 +49,15 @@ public final class ReleaseInterpreter {
 	private ReleaseSection interpret(
 			RepositoryReleases releases,
 			RuntimeEnvironment runtime) {
+        return interpret(releases, runtime, MAX_VISIBLE_ASSETS, MAX_VISIBLE_MATCHES);
+    }
+
+    /** Selection must see every eligible asset before the experience response is clipped. */
+    public ReleaseSection forExperience(RepositoryReleases releases, RuntimeEnvironment runtime) {
+        return interpret(releases, runtime, Integer.MAX_VALUE, Integer.MAX_VALUE);
+    }
+
+    private ReleaseSection interpret(RepositoryReleases releases, RuntimeEnvironment runtime, int assetLimit, int matchLimit) {
 		List<RepositoryRelease> published = releases.items().stream()
 				.filter(release -> !release.draft())
 				.toList();
@@ -77,15 +86,15 @@ public final class ReleaseInterpreter {
 				ReleaseChannel.STABLE,
 				advice.orderedStableAssetIds(),
 				advice,
-				MAX_VISIBLE_MATCHES,
+				matchLimit, assetLimit,
 				evidence);
-		int remainingMatches = MAX_VISIBLE_MATCHES - stable.visibleMatchingAssetCount();
+		int remainingMatches = matchLimit - stable.visibleMatchingAssetCount();
 		SummaryResult prerelease = summary(
 				latestPrerelease,
 				ReleaseChannel.PRERELEASE,
 				advice.orderedPrereleaseAssetIds(),
 				advice,
-				remainingMatches,
+				remainingMatches, assetLimit,
 				evidence);
 		return ReleaseSection.available(
 				stable.summary(),
@@ -115,6 +124,7 @@ public final class ReleaseInterpreter {
 			List<Long> orderedMatchingAssetIds,
 			ReleaseAssetAdvisor.Advice advice,
 			int matchingLimit,
+            int assetLimit,
 			Map<String, GuideEvidence> evidence) {
 		if (release == null) {
 			return new SummaryResult(null, 0);
@@ -141,7 +151,7 @@ public final class ReleaseInterpreter {
 						.thenComparingLong(RepositoryReleaseAsset::id))
 				.toList();
 		List<ReleaseAsset> visibleAssets = sortedAssets.stream()
-				.limit(MAX_VISIBLE_ASSETS)
+				.limit(assetLimit)
 				.map(asset -> visibleAsset(
 						asset, releaseEvidenceId, advice.decisions().get(asset.id()), evidence))
 				.toList();
@@ -158,7 +168,7 @@ public final class ReleaseInterpreter {
 		if (channel == ReleaseChannel.PRERELEASE) {
 			warnings.add(ReleaseWarning.PRERELEASE);
 		}
-		if (release.excludedAssetCount() > 0 || sortedAssets.size() > MAX_VISIBLE_ASSETS) {
+		if (release.excludedAssetCount() > 0 || sortedAssets.size() > assetLimit) {
 			warnings.add(ReleaseWarning.SOME_ASSETS_OMITTED);
 		}
 		return new SummaryResult(new ReleaseSummary(
@@ -171,7 +181,7 @@ public final class ReleaseInterpreter {
 				orderedMatchingAssetIds.size() > matchingAssets.size(),
 				release.reportedAssetCount(),
 				release.excludedAssetCount(),
-				sortedAssets.size() > MAX_VISIBLE_ASSETS,
+				sortedAssets.size() > assetLimit,
 				warnings,
 				releaseEvidenceId), matchingAssets.size());
 	}

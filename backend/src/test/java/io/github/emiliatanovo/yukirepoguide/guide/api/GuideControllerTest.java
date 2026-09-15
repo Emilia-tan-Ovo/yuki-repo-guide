@@ -42,6 +42,43 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GuideControllerTest {
+    @Test
+    void selectsExperienceUsingRegisteredRegionsAndEnforcesTheRequestContract() throws Exception {
+        readmeSource.returning(new RepositoryReadme("README.md", "abc",
+                "https://github.com/Emilia-tan-Ovo/yuki-repo-guide/blob/main/README.md", "[Demo](https://example.com/demo)"));
+        var session = new org.springframework.mock.web.MockHttpSession();
+        var created = mockMvc.perform(post("/api/guides").session(session).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"repositoryUrl\":\"https://github.com/Emilia-tan-Ovo/yuki-repo-guide\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.experience.guideId").isString()).andReturn();
+        var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+        String body = mapper.readTree(created.getResponse().getContentAsString()).path("experience").toString();
+        mockMvc.perform(post("/api/guides/experience-path").session(session).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PRIMARY_AVAILABLE"))
+                .andExpect(jsonPath("$.primary.kind").value("ONLINE"));
+        mockMvc.perform(post("/api/guides/experience-path").session(new org.springframework.mock.web.MockHttpSession())
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isGone())
+                .andExpect(jsonPath("$.code").value("EXPERIENCE_INPUT_EXPIRED"));
+        mockMvc.perform(post("/api/guides/experience-path").session(session).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_EXPERIENCE_INPUT"));
+        String invalidRuntime = body.substring(0, body.length() - 1) + ",\"runtime\":{\"operatingSystem\":\"unknown\",\"architecture\":\"x64\"}}";
+        mockMvc.perform(post("/api/guides/experience-path").session(session).contentType(MediaType.APPLICATION_JSON).content(invalidRuntime))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_RUNTIME_ENVIRONMENT"));
+        var refs = mapper.readTree(body);
+        var quick = mockMvc.perform(post("/api/guides/quick-start").session(session).contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("explanationInputId", refs.path("guideId").asString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.resultId").isString()).andReturn();
+        var updated = mockMvc.perform(post("/api/guides/readme/retry").session(session).contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("canonicalUrl", "https://github.com/Emilia-tan-Ovo/yuki-repo-guide",
+                        "guideId", refs.path("guideId").asString()))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.resultId").isString()).andReturn();
+        String mismatched = mapper.writeValueAsString(Map.of("guideId", refs.path("guideId").asString(),
+                "readmeResultId", mapper.readTree(updated.getResponse().getContentAsString()).path("resultId").asString(),
+                "releasesResultId", refs.path("releasesResultId").asString(),
+                "quickStartResultId", mapper.readTree(quick.getResponse().getContentAsString()).path("resultId").asString()));
+        mockMvc.perform(post("/api/guides/experience-path").session(session).contentType(MediaType.APPLICATION_JSON).content(mismatched))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EXPERIENCE_SOURCE_MISMATCH"));
+    }
+
 	@ParameterizedTest
 	@org.junit.jupiter.params.provider.ValueSource(strings = {"/explanation", "/quick-start"})
 	void explanationUsesTheCreatingSessionAndReturnsOnlyItsRegion(String region) throws Exception {

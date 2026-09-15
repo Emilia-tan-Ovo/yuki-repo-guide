@@ -9,6 +9,7 @@ export function applyReadmeRetry(
   )
   return {
     ...guide,
+    ...(guide.experience ? { experience: retry.resultId ? { ...guide.experience, readmeResultId: retry.resultId, quickStartResultId: null } : null } : {}),
     repository: guide.repository,
     readme: retry.readme,
     languages: guide.languages,

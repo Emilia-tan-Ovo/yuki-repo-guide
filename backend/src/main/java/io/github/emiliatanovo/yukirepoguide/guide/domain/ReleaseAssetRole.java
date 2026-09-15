@@ -6,5 +6,9 @@ public enum ReleaseAssetRole {
 	MANUAL_ARCHIVE,
 	AUXILIARY,
 	SOURCE,
-	UNKNOWN
+	UNKNOWN;
+
+	public boolean isExperienceResource() {
+		return this == STANDARD_INSTALLER || this == PORTABLE || this == MANUAL_ARCHIVE;
+	}
 }

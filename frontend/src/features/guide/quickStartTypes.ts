@@ -11,6 +11,7 @@ export interface QuickStartItem {
   blocks: { evidenceId: string; text: string }[]
 }
 export interface QuickStartResult {
+  resultId?: string | null
   status: 'AVAILABLE' | 'UNAVAILABLE'
   contentStatus: 'COMPLETE' | 'INCOMPLETE' | 'NOT_PROVIDED' | null
   requirements: QuickStartItem[]
