@@ -21,7 +21,7 @@ class DeepSeekAdapterTest {
             exchange.sendResponseHeaders(429, body.length);
             exchange.getResponseBody().write(body); exchange.close();
         }, adapter -> {
-            assertThatThrownBy(() -> adapter.generate(new ExplanationInput("notes", Map.of()), false, Duration.ofSeconds(2)))
+            assertThatThrownBy(() -> adapter.generate(new ModelRequest("仅返回 JSON", new ExplanationInput("notes", Map.of()), 1024, 32768), Duration.ofSeconds(2)))
                     .isInstanceOfSatisfying(ExplanationException.class, e -> {
                         assertThat(e.code()).isEqualTo("EXPLANATION_RATE_LIMITED");
                         assertThat(e.retryAfterSeconds()).isEqualTo(15);
@@ -36,7 +36,7 @@ class DeepSeekAdapterTest {
             exchange.sendResponseHeaders(200, body.length);
             try { exchange.getResponseBody().write(body); } finally { exchange.close(); }
         }, adapter -> assertThatThrownBy(() ->
-                adapter.generate(new ExplanationInput("notes", Map.of()), false, Duration.ofSeconds(2)))
+                adapter.generate(new ModelRequest("仅返回 JSON", new ExplanationInput("notes", Map.of()), 1024, 32768), Duration.ofSeconds(2)))
                 .hasMessage("EXPLANATION_UPSTREAM_FAILURE"));
     }
     @Test
@@ -48,7 +48,7 @@ class DeepSeekAdapterTest {
             try { Thread.sleep(500); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
             finally { exchange.close(); }
         }, adapter -> assertThatThrownBy(() ->
-                adapter.generate(new ExplanationInput("notes", Map.of()), false, Duration.ofMillis(100)))
+                adapter.generate(new ModelRequest("仅返回 JSON", new ExplanationInput("notes", Map.of()), 1024, 32768), Duration.ofMillis(100)))
                 .hasMessage("EXPLANATION_TIMEOUT"));
     }
     private void withServer(com.sun.net.httpserver.HttpHandler handler,
@@ -77,7 +77,7 @@ class DeepSeekAdapterTest {
             var adapter = new DeepSeekAdapter(HttpClient.newHttpClient(),
                     URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/chat/completions"),
                     "test-key", ExplanationSettings.defaults());
-            assertThat(adapter.generate(new ExplanationInput("notes", Map.of()), false, Duration.ofSeconds(2))).isEqualTo("ok");
+            assertThat(adapter.generate(new ModelRequest("仅返回 JSON", new ExplanationInput("notes", Map.of()), 1024, 32768), Duration.ofSeconds(2))).isEqualTo("ok");
             var json = JsonMapper.builder().build().readTree(request.get());
             assertThat(json.path("model").asString()).isEqualTo("deepseek-flash");
             assertThat(json.path("response_format").path("type").asString()).isEqualTo("json_object");

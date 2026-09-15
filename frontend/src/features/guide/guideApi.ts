@@ -10,6 +10,14 @@ import type {
 } from './guideTypes.ts'
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
 import type { ExplanationResult } from './explanationTypes'
+import type { QuickStartResult } from './quickStartTypes'
+
+export async function requestQuickStart(explanationInputId: string): Promise<QuickStartResult> {
+  return requestGuide<QuickStartResult>(() => fetchWithCsrfRetry('/api/guides/quick-start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ explanationInputId }),
+  }))
+}
 
 export async function requestExplanation(explanationInputId: string): Promise<ExplanationResult> {
   return requestGuide<ExplanationResult>(() => fetchWithCsrfRetry('/api/guides/explanation', {

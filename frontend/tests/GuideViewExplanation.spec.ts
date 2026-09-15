@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import GuideView from '../src/features/guide/GuideView.vue'
 import RepositoryUrlForm from '../src/features/guide/components/RepositoryUrlForm.vue'
-import { createGuide, requestExplanation, retryReadme, GuideApiError, GuideAuthenticationRequiredError } from '../src/features/guide/guideApi'
+import { createGuide, requestExplanation, requestQuickStart, retryReadme, GuideApiError, GuideAuthenticationRequiredError } from '../src/features/guide/guideApi'
 import RepositoryIdentityCard from '../src/features/guide/components/RepositoryIdentityCard.vue'
 import ExplanationSection from '../src/features/guide/components/ExplanationSection.vue'
 
 vi.mock('../src/features/guide/guideApi', async original => ({
   ...await original<typeof import('../src/features/guide/guideApi')>(),
-  createGuide: vi.fn(), requestExplanation: vi.fn(), retryReadme: vi.fn(),
+  createGuide: vi.fn(), requestExplanation: vi.fn(), retryReadme: vi.fn(), requestQuickStart: vi.fn(),
 }))
 let wrapper: VueWrapper
 afterEach(() => { wrapper?.unmount(); vi.clearAllMocks() })
@@ -27,7 +27,76 @@ const available = {
   evidence: { intro: { id: 'intro', text: '支持本地笔记', sourceUrl: 'https://github.com/octo/notes', path: 'README.md', sha: 'abc' } },
   code: null, retryAfterSeconds: null,
 }
+const quickAvailable = {
+  status: 'AVAILABLE' as const, contentStatus: 'COMPLETE' as const,
+  requirements: [], configuration: [], cautions: [], gaps: [],
+  steps: [{ text: '旧项目的启动步骤', evidenceIds: ['cmd'], blocks: [{ evidenceId: 'cmd', text: 'run-app\n' }] }],
+  evidence: { cmd: { id: 'cmd', kind: 'COMMAND' as const, sourceUrl: 'https://github.com/octo/notes', path: 'README.md', sha: 'abc', section: 'Install', order: 1, text: 'run-app\n' } },
+  code: null, retryAfterSeconds: null,
+}
 describe('渐进式介绍', () => {
+  it('renders the introduction while Quick Start is still loading and discards Quick Start after README replacement', async () => {
+    let resolve!: (value: typeof quickAvailable) => void
+    vi.mocked(requestExplanation).mockResolvedValue(available)
+    vi.mocked(requestQuickStart).mockReturnValueOnce(new Promise(r => { resolve = r }))
+    await start()
+    expect(wrapper.text()).toContain(available.introduction)
+    expect(wrapper.text()).toContain('正在整理 Quick Start')
+    vi.mocked(retryReadme).mockResolvedValue({ readme: guide('first').readme, evidence: {} })
+    wrapper.findComponent(RepositoryIdentityCard).vm.$emit('retry-readme')
+    await flushPromises()
+    resolve(quickAvailable)
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('旧项目的启动步骤')
+    expect(wrapper.text()).not.toContain(available.introduction)
+    expect(wrapper.text()).toContain('Quick Start 所需资料已过期或已更新')
+  })
+  it('ignores a delayed Quick Start after switching repositories', async () => {
+    let resolve!: (value: typeof quickAvailable) => void
+    vi.mocked(requestExplanation).mockResolvedValue(available)
+    vi.mocked(requestQuickStart).mockReturnValueOnce(new Promise(r => { resolve = r }))
+      .mockResolvedValueOnce({ ...quickAvailable, steps: [{ ...quickAvailable.steps[0]!, text: '新项目的启动步骤' }] })
+    await start()
+    vi.mocked(createGuide).mockResolvedValue(guide('second'))
+    wrapper.findComponent(RepositoryUrlForm).vm.$emit('submit', 'https://github.com/octo/second')
+    await flushPromises()
+    resolve(quickAvailable)
+    await flushPromises()
+    expect(wrapper.text()).toContain('新项目的启动步骤')
+    expect(wrapper.text()).not.toContain('旧项目的启动步骤')
+  })
+  it('recovers both explanation requests after concurrent authentication failures', async () => {
+    vi.mocked(requestExplanation).mockRejectedValueOnce(new GuideAuthenticationRequiredError()).mockResolvedValueOnce(available)
+    vi.mocked(requestQuickStart).mockRejectedValueOnce(new GuideAuthenticationRequiredError()).mockResolvedValueOnce(quickAvailable)
+    await start()
+    const retry = wrapper.emitted('authenticationRequired')?.at(-1)?.[0] as () => Promise<void>
+    await retry()
+    await flushPromises()
+    expect(requestExplanation).toHaveBeenCalledTimes(2)
+    expect(requestQuickStart).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain(available.introduction)
+    expect(wrapper.text()).toContain('旧项目的启动步骤')
+  })
+  it('loads Quick Start independently and retries it without regenerating the introduction', async () => {
+    vi.mocked(requestExplanation).mockResolvedValue(available)
+    vi.mocked(requestQuickStart).mockResolvedValueOnce({
+      status: 'UNAVAILABLE', contentStatus: null, requirements: [], steps: [], configuration: [], cautions: [], gaps: [],
+      evidence: {}, code: 'EXPLANATION_TIMEOUT', retryAfterSeconds: null,
+    }).mockResolvedValueOnce({
+      status: 'AVAILABLE', contentStatus: 'NOT_PROVIDED', requirements: [], steps: [], configuration: [], cautions: [], gaps: [],
+      evidence: {}, code: null, retryAfterSeconds: null,
+    })
+    await start()
+    expect(wrapper.text()).toContain(available.introduction)
+    expect(wrapper.text()).toContain('Quick Start 暂不可用')
+    const retry = wrapper.findAll('button').find(button => button.text() === '重试 Quick Start')!
+    await retry.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('README 未提供可整理的体验步骤')
+    expect(requestExplanation).toHaveBeenCalledTimes(1)
+    expect(requestQuickStart).toHaveBeenCalledTimes(2)
+    expect(createGuide).toHaveBeenCalledTimes(1)
+  })
   it('never starts explanation after unmounting during guide creation', async () => {
     let resolve!: (value: ReturnType<typeof guide>) => void
     vi.mocked(createGuide).mockReturnValueOnce(new Promise(r => { resolve = r }))

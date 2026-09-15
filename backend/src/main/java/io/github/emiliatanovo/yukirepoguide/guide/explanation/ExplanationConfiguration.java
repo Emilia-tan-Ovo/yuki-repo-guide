@@ -1,6 +1,7 @@
 package io.github.emiliatanovo.yukirepoguide.guide.explanation;
 
 import io.github.emiliatanovo.yukirepoguide.guide.deepseek.DeepSeekAdapter;
+import io.github.emiliatanovo.yukirepoguide.guide.quickstart.*;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
@@ -11,8 +12,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(ExplanationSettings.class)
+@EnableConfigurationProperties({ExplanationSettings.class, QuickStartSettings.class})
 public class ExplanationConfiguration {
+    @Bean QuickStartInputSelector quickStartInputSelector(QuickStartSettings settings) {
+        return new QuickStartInputSelector(settings);
+    }
+    @Bean QuickStartGenerator quickStartGenerator(ExplanationModel model, QuickStartSettings settings, Clock clock) {
+        return new QuickStartGenerator(model, settings, clock);
+    }
     @Bean ExplanationSnapshots explanationSnapshots(ExplanationSettings settings, Clock clock) {
         return new ExplanationSnapshots(settings, clock);
     }

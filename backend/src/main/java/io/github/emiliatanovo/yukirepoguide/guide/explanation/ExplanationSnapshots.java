@@ -1,5 +1,6 @@
 package io.github.emiliatanovo.yukirepoguide.guide.explanation;
 
+import io.github.emiliatanovo.yukirepoguide.guide.quickstart.QuickStartInput;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -13,17 +14,35 @@ public final class ExplanationSnapshots {
     public ExplanationSnapshots(ExplanationSettings settings, Clock clock) {
         this.settings = settings; this.clock = clock;
     }
-    public synchronized String save(String owner, ExplanationInput input) {
+    public synchronized String save(String owner, ExplanationInput input, QuickStartInput quickStart) {
         if (owner == null) return null;
         purge();
         if (entries.size() >= settings.capacity()) {
-            var victim = entries.entrySet().stream().filter(e -> !e.getValue().busy).findFirst();
+            var victim = entries.entrySet().stream().filter(e -> !e.getValue().active()).findFirst();
             if (victim.isEmpty()) return null;
             entries.remove(victim.get().getKey());
         }
         String id = UUID.randomUUID().toString();
-        entries.put(id, new Entry(owner, input, clock.instant().plus(settings.snapshotTtl())));
+        entries.put(id, new Entry(owner, input, quickStart, clock.instant().plus(settings.snapshotTtl())));
         return id;
+    }
+    public synchronized QuickStartInput acquireQuickStart(String id, String owner) {
+        Entry entry = checked(id, owner);
+        if (entry.quickBusy) throw new ExplanationException("EXPLANATION_IN_PROGRESS");
+        entry.quickBusy = true;
+        return entry.quickStart;
+    }
+    public synchronized void releaseQuickStart(String id) {
+        Entry entry = entries.get(id);
+        if (entry != null) entry.quickBusy = false;
+        purge();
+    }
+    private Entry checked(String id, String owner) {
+        purge();
+        Entry entry = entries.get(id);
+        if (entry == null || owner == null || !entry.owner.equals(owner) || !clock.instant().isBefore(entry.expires))
+            throw new ExplanationException("EXPLANATION_INPUT_EXPIRED");
+        return entry;
     }
     public synchronized ExplanationInput acquire(String id, String owner) {
         purge();
@@ -43,15 +62,18 @@ public final class ExplanationSnapshots {
     }
     private void purge() {
         Instant now = clock.instant();
-        entries.values().removeIf(e -> !e.busy && !now.isBefore(e.expires));
+        entries.values().removeIf(e -> !e.active() && !now.isBefore(e.expires));
     }
     private static final class Entry {
         final String owner;
         final ExplanationInput input;
+        final QuickStartInput quickStart;
         final Instant expires;
         boolean busy;
-        Entry(String owner, ExplanationInput input, Instant expires) {
-            this.owner = owner; this.input = input; this.expires = expires;
+        boolean quickBusy;
+        boolean active() { return busy || quickBusy; }
+        Entry(String owner, ExplanationInput input, QuickStartInput quickStart, Instant expires) {
+            this.owner = owner; this.input = input; this.quickStart = quickStart; this.expires = expires;
         }
     }
 }

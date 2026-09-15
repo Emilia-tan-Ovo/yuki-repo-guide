@@ -15,8 +15,8 @@ class GuideExplanationTest {
 	void retriesInvalidReferencesOnceWithTheSameInputAndDoesNotCacheResults() {
 		var seen = new ArrayList<ExplanationInput>();
 		var corrections = new ArrayList<Boolean>();
-		var fixture = fixture((input, correction, remaining) -> {
-			seen.add(input); corrections.add(correction);
+		var fixture = fixture((request, remaining) -> {
+			seen.add((ExplanationInput) request.input()); corrections.add(request.instructions().contains("上次输出"));
 			return seen.size() == 1 ? VALID.replace("repo-description", "invented") : VALID;
 		});
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
@@ -37,7 +37,7 @@ class GuideExplanationTest {
 	})
 	void rejectsMalformedOrInconsistentOutputAndReleasesTheSnapshot(String output) {
 		var calls = new java.util.concurrent.atomic.AtomicInteger();
-		var fixture = fixture((input, correction, remaining) -> { calls.incrementAndGet(); return output; });
+		var fixture = fixture((request, remaining) -> { calls.incrementAndGet(); return output; });
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
 		assertThat(fixture.service.explain(id, "a").code()).isEqualTo("EXPLANATION_INVALID_OUTPUT");
 		assertThat(calls.get()).isEqualTo(2);
@@ -47,7 +47,7 @@ class GuideExplanationTest {
 
 	@Test
 	void preservesInsufficientEvidenceAsANormalResult() {
-		var fixture = fixture((input, correction, remaining) ->
+		var fixture = fixture((request, remaining) ->
 				"{\"status\":\"INSUFFICIENT_EVIDENCE\",\"introduction\":null,\"evidenceIds\":[]}");
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
 		assertThat(fixture.service.explain(id, "a")).isEqualTo(ExplanationResult.insufficient());
@@ -56,7 +56,7 @@ class GuideExplanationTest {
 	@Test
 	void upstreamFailureDoesNotAutomaticallyRetryOrExposeUpstreamText() {
 		var calls = new java.util.concurrent.atomic.AtomicInteger();
-		var fixture = fixture((input, correction, remaining) -> {
+		var fixture = fixture((request, remaining) -> {
 			calls.incrementAndGet(); throw new ExplanationException("EXPLANATION_RATE_LIMITED", 12L);
 		});
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
@@ -70,7 +70,7 @@ class GuideExplanationTest {
 	@Test
 	void rejectsAnotherSessionAndExpiredOrEvictedInputsWithoutCallingTheModel() {
 		var calls = new java.util.concurrent.atomic.AtomicInteger();
-		var fixture = fixture((input, correction, remaining) -> { calls.incrementAndGet(); return VALID; });
+		var fixture = fixture((request, remaining) -> { calls.incrementAndGet(); return VALID; });
 		var first = fixture.service.createGuide("url", "a").explanationInputId();
 		assertThatThrownBy(() -> fixture.service.explain(first, "b")).hasMessage("EXPLANATION_INPUT_EXPIRED");
 		fixture.service.createGuide("url", "a");
@@ -85,7 +85,7 @@ class GuideExplanationTest {
 	void onlyOneGenerationMayRunForASnapshotAndBusyEntryCannotBeEvicted() throws Exception {
 		var entered = new java.util.concurrent.CountDownLatch(1);
 		var finish = new java.util.concurrent.CountDownLatch(1);
-		var fixture = fixture((input, correction, remaining) -> {
+		var fixture = fixture((request, remaining) -> {
 			entered.countDown();
 			try { if (!finish.await(3, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("test deadline"); }
 			catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
@@ -107,10 +107,10 @@ class GuideExplanationTest {
 	void correctionSharesTheOriginalTimeBudget() {
 		var clock = new MutableClock();
 		var budgets = new ArrayList<Duration>();
-		var fixture = fixture((input, correction, remaining) -> {
+		var fixture = fixture((request, remaining) -> {
 			budgets.add(remaining);
 			clock.advance(Duration.ofSeconds(20));
-			return correction ? VALID : "{}";
+			return request.instructions().contains("上次输出") ? VALID : "{}";
 		}, clock);
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
 		assertThat(fixture.service.explain(id, "a").code()).isEqualTo("EXPLANATION_TIMEOUT");
@@ -121,7 +121,7 @@ class GuideExplanationTest {
 	@Test
 	void selectsIntroductionButExcludesNestedInstallationAndImageContent() {
 		var seen = new ArrayList<ExplanationInput>();
-		var fixture = fixture((input, correction, remaining) -> { seen.add(input); return VALID; });
+		var fixture = fixture((request, remaining) -> { seen.add((ExplanationInput) request.input()); return VALID; });
 		fixture.readme.returning(new RepositoryReadme("README.md", "sha", "https://github.com/octo/notes/blob/main/README.md",
 				"# Notes\n\n开源笔记应用。\n\n![广告](https://evil.example/ad.png)\n\n## Features\n\n标签整理。\n\n### Installation\n\n运行危险安装操作。\n\n#### Overview\n\n不应选中的安装说明。\n\n## Overview\n\n本地保存。\n\n支持 `Java` 和 **Python**。"));
 		var id = fixture.service.createGuide("url", "a").explanationInputId();
@@ -160,8 +160,8 @@ class GuideExplanationTest {
 		var readme = FakeRepositoryReadmeSource.withReadme(new RepositoryReadme("README.md", "abc",
 				"https://github.com/octo/notes/blob/main/README.md", "# Notes\n\n支持本地保存笔记。"));
 		var inputs = new ArrayList<ExplanationInput>();
-		ExplanationModel model = (input, correction, remaining) -> {
-			inputs.add(input);
+		ExplanationModel model = (request, remaining) -> {
+			inputs.add((ExplanationInput) request.input());
 			return "{\"status\":\"AVAILABLE\",\"introduction\":\"一个开源笔记应用。\",\"evidenceIds\":[\"repo-description\"]}";
 		};
 		var settings = ExplanationSettings.defaults();
