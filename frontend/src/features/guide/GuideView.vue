@@ -28,6 +28,8 @@ import { useExplanation } from './useExplanation'
 import QuickStartSection from './components/QuickStartSection.vue'
 import { useGeneratedRegion } from './useGeneratedRegion'
 import { requestQuickStart } from './guideApi'
+import ExperienceSection from './components/ExperienceSection.vue'
+import { useExperience } from './useExperience'
 
 defineProps<{
   loggingOut: boolean
@@ -54,14 +56,20 @@ const releaseRecommendationErrorMessage = ref('')
 const releaseRecommendationRetryAvailableAt = ref<number | null>(null)
 const retryAvailableAt = ref<number | null>(null)
 const currentTime = ref(Date.now())
-const explanation = useExplanation(currentTime, recoverExplanationAuthentication)
-const quickStart = useGeneratedRegion(currentTime, recoverExplanationAuthentication, requestQuickStart, result => result.status === 'AVAILABLE' ? 'available' : 'unavailable')
-const explanationRecoveries = new Set<() => Promise<void>>()
-function recoverExplanationAuthentication(retry: () => Promise<void>) {
-  explanationRecoveries.add(retry)
+const explanation = useExplanation(currentTime, recoverGuideAuthentication)
+const quickStart = useGeneratedRegion(currentTime, recoverGuideAuthentication, requestQuickStart, result => result.status === 'AVAILABLE' ? 'available' : 'unavailable')
+const confirmedExperienceRuntime = ref<ConfirmedRuntime | null>(null)
+const experience = useExperience(() => guide.value?.experience ? {
+  ...guide.value.experience,
+  quickStartResultId: quickStart.result.value?.resultId ?? null,
+  runtime: confirmedExperienceRuntime.value,
+} : null, recoverGuideAuthentication, () => quickStart.state.value)
+const guideRecoveries = new Set<() => Promise<void>>()
+function recoverGuideAuthentication(retry: () => Promise<void>) {
+  guideRecoveries.add(retry)
   emit('authenticationRequired', async () => {
-    const retries = [...explanationRecoveries]
-    explanationRecoveries.clear()
+    const retries = [...guideRecoveries]
+    guideRecoveries.clear()
     await Promise.all(retries.map(resume => resume()))
   })
 }
@@ -102,11 +110,12 @@ onBeforeUnmount(() => {
 })
 
 async function submitGuide(repositoryUrl: string, allowAuthenticationRecovery = true) {
+  confirmedExperienceRuntime.value = null
   guideVersion += 1
   const requestedVersion = guideVersion
   explanation.reset()
   quickStart.reset()
-  explanationRecoveries.clear()
+  guideRecoveries.clear()
   languageRetrying.value = false
   readmeRetrying.value = false
   releaseRetrying.value = false
@@ -161,7 +170,9 @@ async function retryReadmeRegion(
   readmeRetrying.value = true
   readmeErrorMessage.value = ''
   try {
-    const retried = await retryReadme(requestedCanonicalUrl)
+    const retried = guide.value.experience
+      ? await retryReadme(requestedCanonicalUrl, guide.value.experience.guideId)
+      : await retryReadme(requestedCanonicalUrl)
     if (!isCurrentReadmeRetry(
       requestedCanonicalUrl,
       requestedGuideVersion,
@@ -173,7 +184,7 @@ async function retryReadmeRegion(
     guide.value = applyReadmeRetry(guide.value, retried)
     explanation.reset(true)
     quickStart.reset(true)
-    explanationRecoveries.clear()
+    guideRecoveries.clear()
     initializeReadmeState()
   } catch (error) {
     if (!isCurrentReadmeRetry(
@@ -185,12 +196,13 @@ async function retryReadmeRegion(
       return
     }
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
-      emit('authenticationRequired', () => retryReadmeRegion(false, requestedGuideVersion))
+      recoverGuideAuthentication(() => retryReadmeRegion(false, requestedGuideVersion))
       return
     }
     if (error instanceof GuideApiError && error.code === 'README_CONTENT_UNSUPPORTED') {
       guide.value = {
         ...guide.value,
+        experience: null,
         readme: {
           status: 'FAILED',
           candidates: [],
@@ -203,6 +215,8 @@ async function retryReadmeRegion(
         },
       }
       readmeRetryAvailableAt.value = null
+      explanation.reset(true)
+      quickStart.reset(true)
     }
     readmeErrorMessage.value = error instanceof GuideApiError
       ? messageForReadmeCode(error.code, error.message)
@@ -253,7 +267,7 @@ async function retryLanguageRegion(
       return
     }
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
-      emit('authenticationRequired', () => retryLanguageRegion(false, requestedGuideVersion))
+      recoverGuideAuthentication(() => retryLanguageRegion(false, requestedGuideVersion))
       return
     }
     languageErrorMessage.value = error instanceof GuideApiError
@@ -284,7 +298,9 @@ async function retryReleaseRegion(
   releaseRetrying.value = true
   releaseErrorMessage.value = ''
   try {
-    const retried = await retryReleases(requestedCanonicalUrl)
+    const retried = guide.value.experience
+      ? await retryReleases(requestedCanonicalUrl, guide.value.experience.guideId)
+      : await retryReleases(requestedCanonicalUrl)
     if (!isCurrentReleaseRetry(
       requestedCanonicalUrl,
       requestedGuideVersion,
@@ -305,12 +321,13 @@ async function retryReleaseRegion(
       return
     }
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
-      emit('authenticationRequired', () => retryReleaseRegion(false, requestedGuideVersion))
+      recoverGuideAuthentication(() => retryReleaseRegion(false, requestedGuideVersion))
       return
     }
     if (error instanceof GuideApiError && error.code === 'RELEASE_HISTORY_UNSUPPORTED') {
       guide.value = {
         ...guide.value,
+        experience: null,
         releases: {
           status: 'FAILED',
           latestStable: null,
@@ -360,9 +377,12 @@ async function recommendReleaseAssets(
 
   const requestedCanonicalUrl = guide.value.repository.canonicalUrl
   releaseRecommendationBusy.value = true
+  confirmedExperienceRuntime.value = { ...runtime }
   releaseRecommendationErrorMessage.value = ''
   try {
-    const recommended = await recommendReleases(requestedCanonicalUrl, runtime)
+    const recommended = guide.value.experience
+      ? await recommendReleases(requestedCanonicalUrl, runtime, guide.value.experience.guideId)
+      : await recommendReleases(requestedCanonicalUrl, runtime)
     if (!isCurrentReleaseRetry(
       requestedCanonicalUrl,
       requestedGuideVersion,
@@ -372,6 +392,7 @@ async function recommendReleaseAssets(
       return
     }
     guide.value = applyReleaseRetry(guide.value, recommended)
+    initializeReleaseState()
     releaseRecommendationRetryAvailableAt.value = null
   } catch (error) {
     if (!isCurrentReleaseRetry(
@@ -383,7 +404,7 @@ async function recommendReleaseAssets(
       return
     }
     if (error instanceof GuideAuthenticationRequiredError && allowAuthenticationRecovery) {
-      emit('authenticationRequired', () =>
+      recoverGuideAuthentication(() =>
         recommendReleaseAssets(runtime, false, requestedGuideVersion))
       return
     }
@@ -478,8 +499,19 @@ function setReleaseRecommendationRetryDeadline(retryAfterSeconds?: number | null
       </p>
     </section>
 
-    <section class="workspace" aria-label="仓库导览入口">
+    <section class="workspace" :class="{ 'has-guide': status === 'success' }" aria-label="仓库导览入口">
       <RepositoryUrlForm :submitting="status === 'submitting'" @submit="submitGuide" />
+
+      <ExperienceSection
+        v-if="status === 'success' && guide"
+        :key="guide.explanationInputId ?? guide.repository.canonicalUrl"
+        :result="experience.result.value"
+        :quick-start-state="quickStart.state.value"
+        :state="guide.experience ? experience.state.value : 'expired'"
+        :message="guide.experience ? experience.message.value : '路径选择所需资料暂不可用，请重新生成导览。'"
+        @retry="experience.retry()"
+        @regenerate="submitGuide(guide.repository.canonicalUrl)"
+      />
 
       <Transition name="result" mode="out-in">
         <RepositoryIdentityCard
@@ -661,6 +693,10 @@ h1 em {
   grid-template-columns: minmax(0, 1.08fr) minmax(18rem, 0.92fr);
   gap: 1rem;
   align-items: start;
+}
+
+.workspace.has-guide {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .empty-state,

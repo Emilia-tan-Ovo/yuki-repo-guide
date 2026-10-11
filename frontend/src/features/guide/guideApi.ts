@@ -11,6 +11,13 @@ import type {
 import { fetchWithCsrfRetry } from '../auth/authApi.ts'
 import type { ExplanationResult } from './explanationTypes'
 import type { QuickStartResult } from './quickStartTypes'
+import type { ExperienceRequest, ExperienceResult } from './experienceTypes'
+
+export async function requestExperience(request: ExperienceRequest): Promise<ExperienceResult> {
+  return requestGuide<ExperienceResult>(() => fetchWithCsrfRetry('/api/guides/experience-path', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+  }))
+}
 
 export async function requestQuickStart(explanationInputId: string): Promise<QuickStartResult> {
   return requestGuide<QuickStartResult>(() => fetchWithCsrfRetry('/api/guides/quick-start', {
@@ -61,20 +68,21 @@ export async function retryLanguages(canonicalUrl: string): Promise<LanguageRetr
   return requestGuide<LanguageRetryResponse>(() => sendLanguageRetryRequest(canonicalUrl))
 }
 
-export async function retryReadme(canonicalUrl: string): Promise<ReadmeRetryResponse> {
-  return requestGuide<ReadmeRetryResponse>(() => sendReadmeRetryRequest(canonicalUrl))
+export async function retryReadme(canonicalUrl: string, guideId?: string): Promise<ReadmeRetryResponse> {
+  return requestGuide<ReadmeRetryResponse>(() => sendReadmeRetryRequest(canonicalUrl, guideId))
 }
 
-export async function retryReleases(canonicalUrl: string): Promise<ReleaseRetryResponse> {
-  return requestGuide<ReleaseRetryResponse>(() => sendReleaseRetryRequest(canonicalUrl))
+export async function retryReleases(canonicalUrl: string, guideId?: string): Promise<ReleaseRetryResponse> {
+  return requestGuide<ReleaseRetryResponse>(() => sendReleaseRetryRequest(canonicalUrl, guideId))
 }
 
 export async function recommendReleases(
   canonicalUrl: string,
   runtime: ConfirmedRuntime,
+  guideId?: string,
 ): Promise<ReleaseRecommendationResponse> {
   return requestGuide<ReleaseRecommendationResponse>(() =>
-    sendReleaseRecommendationRequest(canonicalUrl, runtime))
+    sendReleaseRecommendationRequest(canonicalUrl, runtime, guideId))
 }
 
 async function requestGuide<T>(sendRequest: () => Promise<Response>): Promise<T> {
@@ -120,30 +128,31 @@ function sendLanguageRetryRequest(canonicalUrl: string): Promise<Response> {
   })
 }
 
-function sendReadmeRetryRequest(canonicalUrl: string): Promise<Response> {
+function sendReadmeRetryRequest(canonicalUrl: string, guideId?: string): Promise<Response> {
   return fetchWithCsrfRetry('/api/guides/readme/retry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ canonicalUrl }),
+    body: JSON.stringify({ canonicalUrl, guideId }),
   })
 }
 
-function sendReleaseRetryRequest(canonicalUrl: string): Promise<Response> {
+function sendReleaseRetryRequest(canonicalUrl: string, guideId?: string): Promise<Response> {
   return fetchWithCsrfRetry('/api/guides/releases/retry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ canonicalUrl }),
+    body: JSON.stringify({ canonicalUrl, guideId }),
   })
 }
 
 function sendReleaseRecommendationRequest(
   canonicalUrl: string,
   runtime: ConfirmedRuntime,
+  guideId?: string,
 ): Promise<Response> {
   return fetchWithCsrfRetry('/api/guides/releases/recommendation', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ canonicalUrl, runtime }),
+    body: JSON.stringify({ canonicalUrl, runtime, guideId }),
   })
 }
 

@@ -10,6 +10,7 @@ export function applyReleaseRetry(
   )
   return {
     ...guide,
+    ...(guide.experience ? { experience: retry.resultId ? { ...guide.experience, releasesResultId: retry.resultId } : null } : {}),
     releases: retry.releases,
     evidence: { ...nonReleaseEvidence, ...retry.evidence },
   }

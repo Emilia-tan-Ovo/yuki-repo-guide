@@ -29,6 +29,12 @@ public final class GuideController {
 		return guideService.explain(request.explanationInputId(), session.getId());
 	}
 
+    @PostMapping("/experience-path")
+    public io.github.emiliatanovo.yukirepoguide.guide.experience.ExperienceResult experience(
+            @Valid @RequestBody ExperienceRequest request, HttpSession session) {
+        return guideService.experiencePath(request.references(), session.getId(), request.confirmedRuntime());
+    }
+
 	@PostMapping("/quick-start")
 	public io.github.emiliatanovo.yukirepoguide.guide.quickstart.QuickStartResult quickStart(
 			@Valid @RequestBody ExplanationRequest request, HttpSession session) {
@@ -44,23 +50,23 @@ public final class GuideController {
 
 	@PostMapping("/readme/retry")
 	public ReadmeRetryResponse retryReadme(
-			@Valid @RequestBody RetryReadmeRequest request) {
+			@Valid @RequestBody RetryReadmeRequest request, HttpSession session) {
 		return ReadmeRetryResponse.from(
-				guideService.retryReadme(request.canonicalUrl()));
+				guideService.retryReadme(request.canonicalUrl(), request.guideId(), session.getId()));
 	}
 
 	@PostMapping("/releases/retry")
 	public ReleaseRetryResponse retryReleases(
-			@Valid @RequestBody RetryReleasesRequest request) {
+			@Valid @RequestBody RetryReleasesRequest request, HttpSession session) {
 		return ReleaseRetryResponse.from(
-				guideService.retryReleases(request.canonicalUrl()));
+				guideService.retryReleases(request.canonicalUrl(), request.guideId(), session.getId()));
 	}
 
 	@PostMapping("/releases/recommendation")
 	public ReleaseRecommendationResponse recommendReleases(
-			@Valid @RequestBody ReleaseRecommendationRequest request) {
+			@Valid @RequestBody ReleaseRecommendationRequest request, HttpSession session) {
 		return ReleaseRecommendationResponse.from(
 				guideService.recommendReleases(
-						request.canonicalUrl(), request.confirmedRuntime()));
+						request.canonicalUrl(), request.confirmedRuntime(), request.guideId(), session.getId()));
 	}
 }

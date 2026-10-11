@@ -16,7 +16,7 @@ const sourceUnavailable = computed(() => props.result?.code === 'QUICK_START_SOU
 </script>
 
 <template>
-  <section class="quick-start" aria-labelledby="quick-start-title" aria-live="polite" :aria-busy="state === 'loading'">
+  <section id="quick-start" class="quick-start" aria-labelledby="quick-start-title" aria-live="polite" :aria-busy="state === 'loading'">
     <p class="label">AI 整理 · 基于 README 证据</p>
     <h2 id="quick-start-title">Quick Start <span v-if="result?.contentStatus">· {{ labels[result.contentStatus] }}</span></h2>
     <template v-if="state === 'available' && result">

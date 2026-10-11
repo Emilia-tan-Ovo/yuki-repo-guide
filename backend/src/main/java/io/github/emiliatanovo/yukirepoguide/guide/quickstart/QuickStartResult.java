@@ -4,7 +4,16 @@ import java.util.*;
 
 public record QuickStartResult(Status status, ContentStatus contentStatus,
         List<Item> requirements, List<Item> steps, List<Item> configuration, List<Item> cautions,
-        List<Item> gaps, Map<String, QuickStartInput.Evidence> evidence, String code, Long retryAfterSeconds) {
+        List<Item> gaps, Map<String, QuickStartInput.Evidence> evidence, String code, Long retryAfterSeconds, String resultId) {
+    public QuickStartResult(Status status, ContentStatus contentStatus, List<Item> requirements, List<Item> steps,
+            List<Item> configuration, List<Item> cautions, List<Item> gaps, Map<String, QuickStartInput.Evidence> evidence,
+            String code, Long retryAfterSeconds) {
+        this(status, contentStatus, requirements, steps, configuration, cautions, gaps, evidence, code, retryAfterSeconds, null);
+    }
+    public QuickStartResult withResultId(String id) {
+        return new QuickStartResult(status, contentStatus, requirements, steps, configuration, cautions, gaps,
+                evidence, code, retryAfterSeconds, id);
+    }
     public enum Status { AVAILABLE, UNAVAILABLE }
     public enum ContentStatus { COMPLETE, INCOMPLETE, NOT_PROVIDED }
     public record Block(String evidenceId, String text) {}

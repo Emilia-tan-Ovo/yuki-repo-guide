@@ -21,9 +21,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class GuideAccessSecurityTest {
 	@org.junit.jupiter.params.ParameterizedTest
-	@org.junit.jupiter.params.provider.ValueSource(strings = {"/explanation", "/quick-start"})
+	@org.junit.jupiter.params.provider.ValueSource(strings = {"/explanation", "/quick-start", "/experience-path"})
 	void protectsExplanationWithSessionAndCsrf(String region) throws Exception {
 		String body = "{\"explanationInputId\":\"11111111-1111-1111-1111-111111111111\"}";
+        if (region.equals("/experience-path")) body = "{\"guideId\":\"missing\",\"readmeResultId\":\"missing\",\"releasesResultId\":\"missing\"}";
 		mockMvc.perform(post("/api/guides" + region).with(csrf())
 				.contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isUnauthorized());
 		mockMvc.perform(post("/api/guides" + region).with(user("trial-user"))

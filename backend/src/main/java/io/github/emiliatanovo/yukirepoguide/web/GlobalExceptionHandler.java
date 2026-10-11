@@ -18,6 +18,14 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public final class GlobalExceptionHandler {
+    @ExceptionHandler(io.github.emiliatanovo.yukirepoguide.guide.experience.ExperienceException.class)
+    public ProblemDetail handleExperienceState(io.github.emiliatanovo.yukirepoguide.guide.experience.ExperienceException exception) {
+        boolean mismatch = "EXPERIENCE_SOURCE_MISMATCH".equals(exception.code());
+        var problem = ProblemDetail.forStatusAndDetail(mismatch ? HttpStatus.CONFLICT : HttpStatus.GONE,
+                mismatch ? "路径选择的资料版本不一致，请重新生成导览。" : "路径选择所需资料已过期或不可用，请重新生成导览。");
+        problem.setProperty("code", exception.code());
+        return problem;
+    }
 
 	@ExceptionHandler(io.github.emiliatanovo.yukirepoguide.guide.explanation.ExplanationException.class)
 	public ProblemDetail handleExplanationState(
@@ -113,6 +121,11 @@ public final class GlobalExceptionHandler {
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ProblemDetail handleInvalidRequest(MethodArgumentNotValidException exception) {
+        if (exception.getBindingResult().getTarget() instanceof io.github.emiliatanovo.yukirepoguide.guide.api.ExperienceRequest) {
+            var problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "路径选择请求标识无效，请重新生成导览。");
+            problem.setProperty("code", "INVALID_EXPERIENCE_INPUT");
+            return problem;
+        }
 		if (exception.getBindingResult().getTarget() instanceof
 				io.github.emiliatanovo.yukirepoguide.guide.api.ExplanationRequest) {
 			var problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "介绍请求标识无效，请重新生成导览。");

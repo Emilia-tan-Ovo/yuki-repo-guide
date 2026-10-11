@@ -15,6 +15,7 @@ import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryLanguageBytes
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryRef;
 import io.github.emiliatanovo.yukirepoguide.guide.domain.RuntimeEnvironment;
 import io.github.emiliatanovo.yukirepoguide.guide.quickstart.*;
+import io.github.emiliatanovo.yukirepoguide.guide.experience.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import io.github.emiliatanovo.yukirepoguide.guide.explanation.*;
@@ -115,9 +116,10 @@ public final class GuideService {
 			languages = LanguageSection.failed(exception.code(), exception.retryAfterSeconds());
 		}
 		ReleaseSection releases;
+        io.github.emiliatanovo.yukirepoguide.guide.domain.RepositoryReleases releaseSource = null;
 		try {
-			releases = releaseInterpreter.interpret(
-					repositoryReleaseSource.fetchReleases(repository.reference()));
+            releaseSource = repositoryReleaseSource.fetchReleases(repository.reference());
+			releases = releaseInterpreter.interpret(releaseSource);
 			evidence.putAll(releases.evidence());
 		}
 		catch (GitHubSourceException exception) {
@@ -130,10 +132,17 @@ public final class GuideService {
 					false,
 					null);
 		}
+        var references = snapshots.saveGuide(snapshotOwner, inputSelector.select(repository, readmeResult.source()),
+                quickSelector.select(readmeResult.source(), readme.status()), repository.reference(), readme, releases, releaseSource);
+
 		return new ProjectGuide(
 				repository, REPOSITORY_EVIDENCE_ID, readme, languages, releases, evidence,
-				snapshots.save(snapshotOwner, inputSelector.select(repository, readmeResult.source()), quickSelector.select(readmeResult.source(), readme.status())));
+                references == null ? null : references.guideId(), references);
 	}
+
+    public ExperienceResult experiencePath(ExperienceReferences references, String owner, RuntimeEnvironment runtime) {
+        return new ExperienceSelector(releaseInterpreter).select(snapshots.experienceInput(references, owner), runtime);
+    }
 
 	public ExplanationResult explain(String inputId, String snapshotOwner) {
 		ExplanationInput input = snapshots.acquire(inputId, snapshotOwner);
@@ -146,7 +155,7 @@ public final class GuideService {
 
 	public QuickStartResult quickStart(String inputId, String snapshotOwner) {
         var input = snapshots.acquireQuickStart(inputId, snapshotOwner);
-        try { return quickStarts.generate(input); }
+        try { return snapshots.recordQuickStart(inputId, quickStarts.generate(input)); }
         finally { snapshots.releaseQuickStart(inputId); }
     }
 
@@ -182,6 +191,19 @@ public final class GuideService {
 		return languageSection(repositoryFactsSource.fetchLanguages(repository));
 	}
 
+    public RegisteredRegion<ReadmeSection> retryReadme(String canonicalUrl, String guideId, String owner) {
+        if (guideId == null) return new RegisteredRegion<>(null, retryReadme(canonicalUrl));
+        var repository = registeredRepository(canonicalUrl, guideId, owner);
+        var readme = initialReadmeSection(repository).section();
+        return snapshots.recordReadme(guideId, owner, readme);
+    }
+
+    private RepositoryRef registeredRepository(String canonicalUrl, String guideId, String owner) {
+        var registered = snapshots.experienceRepository(guideId, owner);
+        if (!registered.equals(repositoryUrlParser.parse(canonicalUrl))) throw ExperienceException.mismatch();
+        return registered;
+    }
+
 	public ReleaseSection retryReleases(String canonicalUrl) {
 		RepositoryRef repository = repositoryUrlParser.parse(canonicalUrl);
 		return releaseInterpreter.interpret(repositoryReleaseSource.fetchReleases(repository));
@@ -194,6 +216,34 @@ public final class GuideService {
 		return releaseInterpreter.recommend(
 				repositoryReleaseSource.fetchReleases(repository), runtime);
 	}
+
+    public RegisteredRegion<ReleaseSection> recommendReleases(String canonicalUrl, RuntimeEnvironment runtime,
+            String guideId, String owner) {
+        if (guideId == null) return new RegisteredRegion<>(null, recommendReleases(canonicalUrl, runtime));
+        var repository = registeredRepository(canonicalUrl, guideId, owner);
+        return registerReleaseResult(repository, guideId, owner, runtime);
+    }
+
+    public RegisteredRegion<ReleaseSection> retryReleases(String canonicalUrl, String guideId, String owner) {
+        if (guideId == null) return new RegisteredRegion<>(null, retryReleases(canonicalUrl));
+        var repository = registeredRepository(canonicalUrl, guideId, owner);
+        return registerReleaseResult(repository, guideId, owner, null);
+    }
+
+    private RegisteredRegion<ReleaseSection> registerReleaseResult(RepositoryRef repository, String guideId,
+            String owner, RuntimeEnvironment runtime) {
+        try {
+            var source = repositoryReleaseSource.fetchReleases(repository);
+            var section = runtime == null ? releaseInterpreter.interpret(source) : releaseInterpreter.recommend(source, runtime);
+            return snapshots.recordReleases(guideId, owner, section, source);
+        } catch (GitHubSourceException exception) {
+            return snapshots.recordReleases(guideId, owner,
+                    ReleaseSection.failed(exception.code(), true, exception.retryAfterSeconds()), null);
+        } catch (ReleaseHistoryUnsupportedException exception) {
+            return snapshots.recordReleases(guideId, owner,
+                    ReleaseSection.failed(GuideErrorCode.RELEASE_HISTORY_UNSUPPORTED, false, null), null);
+        }
+    }
 
 	private LanguageSection languageSection(RepositoryLanguageBytes languageBytes) {
 		long totalBytes = languageBytes.bytesByLanguage().values().stream()

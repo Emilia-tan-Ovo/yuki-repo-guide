@@ -165,6 +165,7 @@ export interface Evidence {
 }
 
 export interface GuideResponse {
+  experience?: import('./experienceTypes').ExperienceReferences | null
   explanationInputId?: string | null
   repository: RepositorySummary
   readme: ReadmeSection
@@ -174,6 +175,7 @@ export interface GuideResponse {
 }
 
 export interface ReadmeRetryResponse {
+  resultId?: string | null
   readme: ReadmeSection
   evidence: Record<string, Evidence>
 }
@@ -184,6 +186,7 @@ export interface LanguageRetryResponse {
 }
 
 export interface ReleaseRetryResponse {
+  resultId?: string | null
   releases: ReleaseSection
   evidence: Record<string, Evidence>
 }
